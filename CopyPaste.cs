@@ -2,6 +2,7 @@
 // #define DEBUG
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Drawing;
@@ -164,6 +165,11 @@ namespace Oxide.Plugins
             public int PasteBatchSize = 15;
 
             [JsonProperty(PropertyName =
+                 "Time, in seconds, to wait between paste batches. Use to tweak performance impact of pasting"),
+             DefaultValue(0.075)]
+            public float PasteBatchWait = 0.075f;
+
+            [JsonProperty(PropertyName =
                 "Amount of entities to copy per batch. Use to tweak performance impact of copying")]
             [DefaultValue(100)]
             public int CopyBatchSize = 100;
@@ -174,8 +180,13 @@ namespace Oxide.Plugins
             public int UndoBatchSize = 15;
 
             [JsonProperty(PropertyName =
-                "Prevent These Prefabs From Spawning", ObjectCreationHandling = ObjectCreationHandling.Replace),
-            DefaultValue(typeof(List<string>), "")]
+                 "Time, in seconds, to wait between undo batches. Use to tweak performance impact of undoing"),
+             DefaultValue(0.075)]
+            public float UndoBatchWait = 0.075f;
+
+            [JsonProperty(PropertyName =
+                 "Prevent These Prefabs From Spawning", ObjectCreationHandling = ObjectCreationHandling.Replace),
+             DefaultValue(typeof(List<string>), "")]
             public List<string> BlockedPrefabs = new();
 
             [JsonProperty(PropertyName = "Enable data saving feature")]
@@ -382,7 +393,10 @@ namespace Oxide.Plugins
             for (int i = 0; i < _pendingPastes.Count; i++)
             {
                 var pasteData = _pendingPastes[i];
-                timer.Once(i * 0.1f, () => PasteLoop(pasteData));
+                timer.Once(i * 0.1f, () =>
+                {
+                    pasteData.RunningCoroutine = ServerMgr.Instance.StartCoroutine(PasteLoop(pasteData));
+                });
             }
             _pendingPastes.Clear();
         }
@@ -596,7 +610,7 @@ namespace Oxide.Plugins
             entity.Kill();
         }
 
-        private void UndoLoop(HashSet<BaseEntity> entities, IPlayer player, int count = 0)
+        private IEnumerator UndoLoop(HashSet<BaseEntity> entities, IPlayer player)
         {
             for (var i = entities.Count - 1; i >= 0; i--)
             {
@@ -608,30 +622,20 @@ namespace Oxide.Plugins
                 }
             }
 
+            int entityIndex = 0;
             // Take an amount of entities from the entity list (defined in config) and kill them. Will be repeated for every tick until there are no entities left.
-            entities
-                .Take(_config.UndoBatchSize)
-                .ToList()
-                .ForEach(p =>
-                {
-                    entities.Remove(p);
-                    RemoveEntity(p);
-                });
-
-            // If it gets stuck in infinite loop break the loop.
-            if (count != 0 && entities.Count != 0 && entities.Count == count)
+            foreach (var p in entities)
             {
-                player?.Reply("Undo cancelled because of infinite loop.");
-                return;
+                RemoveEntity(p);
+                if (++entityIndex % _config.UndoBatchSize == 0)
+                    yield return CoroutineEx.waitForSeconds(_config.UndoBatchWait);
             }
 
-            if (entities.Count > 0)
-                NextTick(() => UndoLoop(entities, player, entities.Count));
-            else if (player != null)
+            if (player != null)
             {
                 player.Reply(Lang("UNDO_SUCCESS", player.Id));
 
-                if (_lastPastes.ContainsKey(player.Id) && _lastPastes[player.Id].Count == 0)
+                if (_lastPastes.TryGetValue(player.Id, out var checkFrom) && checkFrom.Count == 0)
                     _lastPastes.Remove(player.Id);
             }
         }
@@ -1547,60 +1551,58 @@ namespace Oxide.Plugins
                 _pendingPastes.Add(pasteData);
             }
             else
-                NextTick(() => PasteLoop(pasteData));
+                NextTick(() => pasteData.RunningCoroutine = ServerMgr.Instance.StartCoroutine(PasteLoop(pasteData)));
 
             return pasteData;
         }
 
-        private void PasteLoop(PasteData pasteData)
+        private IEnumerator PasteLoop(PasteData pasteData)
         {
             if (pasteData.Cancelled)
             {
-                UndoLoop(new HashSet<BaseEntity>(pasteData.PastedEntities), pasteData.Player,
-                    pasteData.PastedEntities.Count);
+                ServerMgr.Instance.StopCoroutine(pasteData.RunningCoroutine);
                 
-                return;
+                ServerMgr.Instance.StartCoroutine(UndoLoop(new(pasteData.PastedEntities), pasteData.Player));
+
+                yield break;
             }
 
-            var entities = pasteData.Entities;
-            var todo = entities.Take(_config.PasteBatchSize).ToArray();
+            int entityIndex = 0;
 
-            foreach (var data in todo)
+            foreach (var data in pasteData.Entities.ToList())
             {
-                entities.Remove(data);
+                pasteData.Entities.Remove(data);
 
                 PasteEntity(data, pasteData);
+
+                if (++entityIndex % _config.PasteBatchSize == 0)
+                    yield return CoroutineEx.waitForSeconds(_config.PasteBatchWait);
             }
 
-            if (entities.Count > 0)
-                NextTick(() => PasteLoop(pasteData));
-            else
+            // Adjust IOEntity positions to fix alignment issues for older file versions
+            if (pasteData.Version < new VersionNumber(4, 2, 0))
+                pasteData.checkPosition = Pool.Get<List<IOEntity>>();
+
+            foreach (var ioData in pasteData.EntityLookup.Values.ToArray())
+                ProgressIOEntity(ioData, pasteData);
+
+            if (pasteData.checkPosition != null)
             {
+                AdjustIOEntityPositions(pasteData);
+                Pool.FreeUnmanaged(ref pasteData.checkPosition);
+            }
 
-                // Adjust IOEntity positions to fix alignment issues for older file versions
-                if (pasteData.Version < new VersionNumber(4, 2, 0))
-                    pasteData.checkPosition = Pool.Get<List<IOEntity>>();
+            foreach (var keyPair in pasteData.ItemsWithSubEntity)
+            {
+                SetItemSubEntity(pasteData, keyPair.Value, keyPair.Key);
+            }
 
-                foreach (var ioData in pasteData.EntityLookup.Values.ToArray())
-                    ProgressIOEntity(ioData, pasteData);
-
-                if (pasteData.checkPosition != null)
-                {
-                    AdjustIOEntityPositions(pasteData);
-                    Pool.FreeUnmanaged(ref pasteData.checkPosition);
-                }
-
-                foreach (var keyPair in pasteData.ItemsWithSubEntity)
-                {
-                    SetItemSubEntity(pasteData, keyPair.Value, keyPair.Key);
-                }
-
-                foreach (var entity in pasteData.StabilityEntities)
-                {
-                    entity.grounded = false;
-                    entity.InitializeSupports();
-                    entity.UpdateStability();
-                }
+            foreach (var entity in pasteData.StabilityEntities)
+            {
+                entity.grounded = false;
+                entity.InitializeSupports();
+                entity.UpdateStability();
+            }
 
                 foreach (var adapter in pasteData.industrialStorageAdaptors)
                 {
@@ -1621,22 +1623,21 @@ namespace Oxide.Plugins
                     adapter.NotifyIndustrialNetworkChanged();
                 }
 
-                pasteData.FinalProcessingActions.ForEach(action => action());
+            pasteData.FinalProcessingActions.ForEach(action => action());
 
-                pasteData.Player.Reply(Lang("PASTE_SUCCESS", pasteData.Player.Id));
+            pasteData.Player.Reply(Lang("PASTE_SUCCESS", pasteData.Player.Id));
 #if DEBUG
-                pasteData.Player.Reply($"Stopwatch took: {pasteData.Sw.Elapsed.TotalMilliseconds} ms");
+            pasteData.Player.Reply($"Stopwatch took: {pasteData.Sw.Elapsed.TotalMilliseconds} ms");
 #endif
 
-                if (!_lastPastes.ContainsKey(pasteData.Player.Id))
-                    _lastPastes[pasteData.Player.Id] = new Stack<List<BaseEntity>>();
+            if (!_lastPastes.TryGetValue(pasteData.Player.Id, out var checkFrom))
+                _lastPastes[pasteData.Player.Id] = checkFrom = new();
 
-                _lastPastes[pasteData.Player.Id].Push(pasteData.PastedEntities);
+            checkFrom.Push(pasteData.PastedEntities);
 
-                pasteData.CallbackFinished?.Invoke();
+            pasteData.CallbackFinished?.Invoke();
 
-                Interface.CallHook("OnPasteFinished", pasteData.PastedEntities, pasteData.Filename, pasteData.Player, pasteData.StartPos);
-            }
+            Interface.CallHook("OnPasteFinished", pasteData.PastedEntities, pasteData.Filename, pasteData.Player, pasteData.StartPos);
         }
 
         private void FindAndAssignTargetDoor(DoorManipulator doorManipulator)
@@ -4474,7 +4475,7 @@ namespace Oxide.Plugins
 
             var entities = new HashSet<BaseEntity>(_lastPastes[player.Id].Pop().ToList());
 
-            UndoLoop(entities, player);
+            ServerMgr.Instance.StartCoroutine(UndoLoop(entities, player));
         }
 
         private static readonly Dictionary<string, string> ReplacePrefab = new Dictionary<string, string>
@@ -5190,6 +5191,7 @@ namespace Oxide.Plugins
             public bool Ownership;
             public bool CheckPlaced = true;
             public bool EnableSaving = true;
+            public Coroutine RunningCoroutine;
             public bool Dlc = true;
             public SkinsMode SkinsMode = SkinsMode.AllSkins;
 
