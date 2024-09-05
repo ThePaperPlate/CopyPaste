@@ -32,7 +32,7 @@ using System.Diagnostics;
  * UIP88 - Turrets fix
  * bsdinis - Wire fix
  * nivex - Ownership option, sign fix
- * bmgjet - pattern firework, industrial
+ * bmgjet - Wallpapers, pattern firework, industrial
  * DezLife - CCTV fix
  * Wulf - Skipping 4.1.24 :D
  * 
@@ -373,7 +373,7 @@ namespace Oxide.Plugins
         {
             const float maxDiff = 0.01f;
 
-            var ents = Pool.GetList<BaseEntity>();
+            var ents = Pool.Get<List<BaseEntity>>();
             try
             {
                 Vis.Entities(pos, maxDiff, ents);
@@ -400,7 +400,7 @@ namespace Oxide.Plugins
             }
             finally
             {
-                Pool.FreeList(ref ents);
+                Pool.FreeUnmanaged(ref ents);
             }
         }
 
@@ -492,7 +492,7 @@ namespace Oxide.Plugins
                 if (checkFrom.Count == 0)
                     break;
 
-                var list = Pool.GetList<BaseEntity>();
+                var list = Pool.Get<List<BaseEntity>>();
                 try
                 {
                     Vis.Entities(checkFrom.Pop(), copyData.Range, list, copyData.CurrentLayer);
@@ -537,7 +537,7 @@ namespace Oxide.Plugins
                 }
                 finally
                 {
-                    Pool.FreeList(ref list);
+                    Pool.FreeUnmanaged(ref list);
                 }
 
                 copyData.BuildingId = buildingId;
@@ -702,6 +702,11 @@ namespace Oxide.Plugins
                 if (buildingblock.customColour != 0)
                 {
                     data.Add("customColour", buildingblock.customColour);
+                }
+                if (buildingblock.HasWallpaper())
+                {
+                    data.Add("wallpaperID", buildingblock.wallpaperID);
+                    data.Add("wallpaperHealth", buildingblock.wallpaperHealth);
                 }
             }
 
@@ -1000,6 +1005,23 @@ namespace Oxide.Plugins
                     ioData.Add("industrialconveyorfilteritems", SerializeConveyorFilter(conveyor.filterItems));
                 }
 
+                var digitalClock = ioEntity as DigitalClock;
+                if (digitalClock != null)
+                {
+                    var alarms = new List<object>();
+                    foreach (var alarm in digitalClock.alarms)
+                    {
+                        alarms.Add(new Dictionary<string, object>
+                        {
+                            { "time", alarm.time },
+                            { "active", alarm.active },
+                        });
+                    }
+
+                    ioData.Add("muted", digitalClock.muted);
+                    ioData.Add("alarms", alarms);
+                }
+
                 data.Add("IOEntity", ioData);
             }
 
@@ -1255,13 +1277,13 @@ namespace Oxide.Plugins
                     if (adapter == null) { continue; }
                     if (!adapter.HasParent())
                     {
-                        List<BaseEntity> ents = Facepunch.Pool.GetList<BaseEntity>();
+                        List<BaseEntity> ents = Facepunch.Pool.Get<List<BaseEntity>>();
                         Vis.Entities(adapter.transform.position + (adapter.transform.up * -0.2f), 0.01f, ents);
                         if (ents.Count > 0)
                         {
                             adapter.SetParent(ents[0], true, true);
                         }
-                        Facepunch.Pool.FreeList(ref ents);
+                        Facepunch.Pool.FreeUnmanaged(ref ents);
                     }
                     adapter.MarkDirtyForceUpdateOutputs();
                     adapter.SendNetworkUpdateImmediate(false);
@@ -1460,6 +1482,14 @@ namespace Oxide.Plugins
                 object customColour;
                 if (data.TryGetValue("customColour", out customColour))
                     buildingBlock.SetCustomColour(Convert.ToUInt32(customColour));
+
+                object wallpaperHealth;
+                if (data.TryGetValue("wallpaperHealth", out wallpaperHealth))
+                    buildingBlock.wallpaperHealth = Convert.ToInt32(wallpaperHealth);
+
+                object wallpaperID;
+                if (data.TryGetValue("wallpaperID", out wallpaperID))
+                    buildingBlock.SetWallpaper(Convert.ToUInt64(wallpaperID));
             }
             else if (baseCombat != null)
                 baseCombat.SetHealth(baseCombat.MaxHealth());
@@ -2119,6 +2149,30 @@ namespace Oxide.Plugins
                 conveyor.SendNetworkUpdate();
             }
 
+            var digitalClock = ioEntity as DigitalClock;
+            if (digitalClock != null)
+            {
+                if (ioData.ContainsKey("muted"))
+                {
+                    digitalClock.muted = Convert.ToBoolean(ioData["muted"]);
+                }
+
+                if (ioData.ContainsKey("alarms") && ioData["alarms"] is List<object> alarms)
+                {
+                    foreach (Dictionary<string, object> alarm in alarms)
+                    {
+                        if (alarm != null && alarm.ContainsKey("time") && alarm.ContainsKey("active"))
+                        {
+                            digitalClock.alarms.Add(new DigitalClock.Alarm(TimeSpan.Parse(alarm["time"].ToString()),
+                                Convert.ToBoolean(alarm["active"])));
+                        }
+                    }
+                }
+
+                digitalClock.MarkDirty();
+                digitalClock.SendNetworkUpdate();
+            }
+
             if (inputs != null && inputs.Count > 0)
             {
                 for (var index = 0; index < inputs.Count; index++)
@@ -2623,7 +2677,7 @@ namespace Oxide.Plugins
             {
                 var headDataData = (Dictionary<string, object>)data["currentTrophyData"];
 
-                var clothing = Pool.GetList<int>();
+                var clothing = Pool.Get<List<int>>();
                 if (headDataData["clothing"] is List<object> clothingData)
                 {
                     foreach (var clothingItem in clothingData)
@@ -2632,7 +2686,7 @@ namespace Oxide.Plugins
                     }
                 }
                 if (clothing.Count == 0)
-                    Pool.FreeList(ref clothing);
+                    Pool.FreeUnmanaged(ref clothing);
 
                 headData.entitySource = Convert.ToUInt32(headDataData["entitySource"]);
                 headData.playerName = headDataData["playerName"] as string;
