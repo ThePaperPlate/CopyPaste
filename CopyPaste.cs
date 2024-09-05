@@ -63,6 +63,9 @@ namespace Oxide.Plugins
             _undoPermission = "copypaste.undo",
             _subDirectory = "copypaste/";
 
+        private bool _timedMode;
+        private double timedModeTimeMs = 45d;
+
         private Dictionary<string, Stack<List<BaseEntity>>> _lastPastes =
             new Dictionary<string, Stack<List<BaseEntity>>>();
 
@@ -245,6 +248,13 @@ namespace Oxide.Plugins
             Config.WriteObject(configData, true);
         }
 
+        private void ToggleTimedMode(bool onOrOff, double _timedModeTimeMs)
+        {
+            Puts($"---> IN TOGGLETIME MODE {onOrOff}");
+            _timedMode = onOrOff;
+            timedModeTimeMs = _timedModeTimeMs;
+            Puts($"SETTING TIMED MODE TO {timedModeTimeMs}");
+        }
         //Hooks
 
         private void Init()
@@ -1194,14 +1204,33 @@ namespace Oxide.Plugins
 
             int entityIndex = 0;
 
+            var sw = new System.Diagnostics.Stopwatch();
+            if (_timedMode)
+            {
+                sw.Start();
+                Puts($"Using timed mode! delay is {timedModeTimeMs}");
+            }
+
             foreach (var data in pasteData.Entities.ToList())
             {
                 pasteData.Entities.Remove(data);
 
                 PasteEntity(data, pasteData);
 
-                if (++entityIndex % _config.PasteBatchSize == 0)
+                entityIndex++;
+                if (_timedMode)
+                {
+                    if (sw.Elapsed.TotalMilliseconds >= timedModeTimeMs)
+                    {
+                        // Puts($"Pasted {entityIndex} in {sw.Elapsed.TotalMilliseconds}ms");
+                        yield return CoroutineEx.waitForFixedUpdate;
+                        sw.Restart();
+                    }
+                }
+                else if (entityIndex % _config.PasteBatchSize == 0)
+                {
                     yield return CoroutineEx.waitForSeconds(_config.PasteBatchWait);
+                }
             }
 
             foreach (var ioData in pasteData.EntityLookup.Values.ToArray())
