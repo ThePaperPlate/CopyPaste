@@ -1619,6 +1619,11 @@ namespace Oxide.Plugins
                         if (signData.ContainsKey(textureKey))
                         {
                             var imageBytes = FixSignage(iSignage, Convert.FromBase64String(signData[textureKey].ToString()));
+                            var hookResult = Interface.CallHook("CopyPasteSetSignImage", entity, imageBytes);
+                            if (hookResult != null && (hookResult is byte[]))
+                            {
+                                imageBytes = (byte[])hookResult;
+                            }
                             newTextureIDs[num] = FileStorage.server.Store(imageBytes, iSignage.FileType, entity.net.ID);
                         }
                         else
