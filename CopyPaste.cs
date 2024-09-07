@@ -2167,6 +2167,9 @@ namespace Oxide.Plugins
 
                     if (oldId != 0 && pasteData.EntityLookup.ContainsKey(oldId))
                     {
+                        if (index >= ioEntity.inputs.Length)
+                            continue;
+
                         if (ioEntity.inputs[index] == null)
                             ioEntity.inputs[index] = new IOEntity.IOSlot();
 
@@ -2213,6 +2216,10 @@ namespace Oxide.Plugins
                                 continue;
 
                             var connectedToSlot = Convert.ToInt32( output["connectedToSlot"] );
+
+                            if (connectedToSlot >= ioEntity2.inputs.Length)
+                                continue;
+
                             var ioInput = ioEntity2.inputs[connectedToSlot];
 
                             ioOutput.connectedTo = new IOEntity.IORef();
