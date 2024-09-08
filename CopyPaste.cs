@@ -2028,6 +2028,12 @@ namespace Oxide.Plugins
                 }
             }
 
+            var baseOven = entity as BaseOven;
+            if (baseOven != null && baseOven.IsOn())
+            {
+                baseOven.StartCooking();
+            }
+
             if (entity is IndustrialStorageAdaptor)
             {
                 pasteData.industrialStorageAdaptors.Add(entity as IndustrialStorageAdaptor);
