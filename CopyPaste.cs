@@ -250,10 +250,8 @@ namespace Oxide.Plugins
 
         private void ToggleTimedMode(bool onOrOff, double _timedModeTimeMs)
         {
-            Puts($"---> IN TOGGLETIME MODE {onOrOff}");
             _timedMode = onOrOff;
             timedModeTimeMs = _timedModeTimeMs;
-            Puts($"SETTING TIMED MODE TO {timedModeTimeMs}");
         }
         //Hooks
 
