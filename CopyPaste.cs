@@ -376,11 +376,41 @@ namespace Oxide.Plugins
             }
         }
 
+        private void RemoveEntity(BaseEntity entity)
+        {
+            // Cleanup the hotspot beloning to the node.
+            var ore = entity as OreResourceEntity;
+            if (ore != null)
+            {
+                ore.CleanupBonus();
+            }
+
+            var io = entity as IOEntity;
+            if (io != null)
+            {
+                io.ClearConnections();
+            }
+
+            var autoTurret = entity as AutoTurret;
+            if (autoTurret != null)
+            {
+                AutoTurret.interferenceUpdateList.Remove(autoTurret);
+            }
+
+            if (entity != null && !entity.IsDestroyed)
+                entity.Kill();
+        }
+
         private void UndoLoop(HashSet<BaseEntity> entities, IPlayer player, int count = 0)
         {
-            foreach (var storageContainer in entities.OfType<StorageContainer>().Where(x => !x.IsDestroyed))
+            for (var i = entities.Count - 1; i >= 0; i--)
             {
-                storageContainer.Kill();
+                var baseEntity = entities.ElementAt(i);
+                if (baseEntity is IItemContainerEntity)
+                {
+                    RemoveEntity(baseEntity);
+                    entities.Remove(baseEntity);
+                }
             }
 
             // Take an amount of entities from the entity list (defined in config) and kill them. Will be repeated for every tick until there are no entities left.
@@ -390,28 +420,7 @@ namespace Oxide.Plugins
                 .ForEach(p =>
                 {
                     entities.Remove(p);
-
-                    // Cleanup the hotspot beloning to the node.
-                    var ore = p as OreResourceEntity;
-                    if (ore != null)
-                    {
-                        ore.CleanupBonus();
-                    }
-
-                    var io = p as IOEntity;
-                    if (io != null)
-                    {
-                        io.ClearConnections();
-                    }
-
-                    var autoTurret = p as AutoTurret;
-                    if (autoTurret != null)
-                    {
-                        AutoTurret.interferenceUpdateList.Remove(autoTurret);
-                    }
-
-                    if (p != null && !p.IsDestroyed)
-                        p.Kill();
+                    RemoveEntity(p);
                 });
 
             // If it gets stuck in infinite loop break the loop.
