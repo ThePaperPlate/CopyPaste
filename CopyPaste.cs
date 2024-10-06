@@ -1230,9 +1230,18 @@ namespace Oxide.Plugins
                 NextTick(() => PasteLoop(pasteData));
             else
             {
+
+                // Adjust IOEntity positions to fix alignment issues for older file versions
+                if (pasteData.Version <= new VersionNumber(4, 2, 0))
+                    pasteData.checkPosition = Pool.Get<List<IOEntity>>();
+
                 foreach (var ioData in pasteData.EntityLookup.Values.ToArray())
-                {
                     ProgressIOEntity(ioData, pasteData);
+
+                if (pasteData.checkPosition != null)
+                {
+                    AdjustIOEntityPositions(pasteData);
+                    Pool.FreeUnmanaged(ref pasteData.checkPosition);
                 }
 
                 foreach (var keyPair in pasteData.ItemsWithSubEntity)
@@ -1282,6 +1291,220 @@ namespace Oxide.Plugins
 
                 Interface.CallHook("OnPasteFinished", pasteData.PastedEntities, pasteData.Filename, pasteData.Player, pasteData.StartPos);
             }
+        }
+
+        private void FindAndAssignTargetDoor(DoorManipulator doorManipulator)
+        {
+            if (!doorManipulator.IsValid() || doorManipulator.IsDestroyed)
+                return;
+
+            Transform manipulatorTransform = doorManipulator.transform;
+            List<Door> doors = Pool.Get<List<Door>>();
+            Vis.Entities(manipulatorTransform.position, 1f, doors, 2097152, QueryTriggerInteraction.Ignore);
+            Door foundDoor = null;
+            float closestDistance = float.PositiveInfinity;
+            foreach (Door door in doors)
+            {
+                if (door.IsValid() && !door.IsDestroyed && !door.IsOnMovingObject())
+                {
+                    float distance = Vector3.Distance(door.transform.position, manipulatorTransform.position);
+                    if (distance < closestDistance)
+                    {
+                        foundDoor = door;
+                        closestDistance = distance;
+                    }
+                }
+            }
+            Pool.FreeUnmanaged(ref doors);
+
+            if (foundDoor.IsValid())
+            {
+                doorManipulator.SetParent(foundDoor, true);
+                doorManipulator.SetTargetDoor(foundDoor);
+            }
+        }
+
+        private void AdjustIOEntityPositions(PasteData pasteData)
+        {
+            Dictionary<IOEntity, OriginalTransforms> originalTransforms = Pool.Get<Dictionary<IOEntity, OriginalTransforms>>();
+            List<IOEntity> emptyOutputs = Pool.Get<List<IOEntity>>();
+
+            // First pass: Adjust entities that have outputs
+            for (int i = 0; i < pasteData.checkPosition.Count; i++)
+            {
+                var ioEntity = pasteData.checkPosition[i];
+                if (!AdjustIOEntityPosition(ioEntity, originalTransforms, true))
+                {
+                    // Didn't have any outputs, queue for input check
+                    emptyOutputs.Add(ioEntity);
+                }
+            }
+
+            // Second pass: Adjust entities that didn't have any outputs
+            for (int i = 0; i < emptyOutputs.Count; i++)
+                AdjustIOEntityPosition(emptyOutputs[i], originalTransforms, false);
+
+            // Third pass: Adjust the line points based on the new positions
+            foreach (var (ioEntity, originalTransform) in originalTransforms)
+                AdjustLinePointPositions(ioEntity, originalTransform);
+
+            Pool.FreeUnmanaged(ref originalTransforms);
+            Pool.FreeUnmanaged(ref emptyOutputs);
+        }
+
+        private bool GetConnectedIOEntity(IOEntity.IOSlot ioSlot, bool isCurrentSlotInput, out IOEntity connectedIOEntity, out IOEntity.IOSlot connectedIOSlot)
+        {
+            connectedIOEntity = null;
+            connectedIOSlot = null;
+
+            if (ioSlot == null || ioSlot.connectedTo == null || ioSlot.connectedToSlot < 0)
+                return false;
+
+            IOEntity ioEntity = ioSlot.connectedTo.Get();
+            if (!ioEntity.IsValid() || ioEntity.IsDestroyed)
+                return false;
+
+            IOEntity.IOSlot[] ioEntitySlots = isCurrentSlotInput ? ioEntity.outputs : ioEntity.inputs;
+            if (ioEntitySlots == null || ioSlot.connectedToSlot >= ioEntitySlots.Length)
+                return false;
+
+            connectedIOEntity = ioEntity;
+            connectedIOSlot = ioEntitySlots[ioSlot.connectedToSlot];
+            return true;
+        }
+
+        private bool AdjustIOEntityPosition(IOEntity ioEntity, Dictionary<IOEntity, OriginalTransforms> originalTransforms, bool checkOutputs)
+        {
+            Transform transform = ioEntity.transform;
+
+            void ApplyPositionCorrection(Vector3 linePoint, Vector3 handlePosition)
+            {
+                Vector3 localDiff = linePoint - handlePosition;
+                Vector3 worldDiff = transform.TransformDirection(localDiff.normalized) * localDiff.magnitude;
+                float magnitude = worldDiff.magnitude;
+                if (magnitude >= 0.5f && magnitude <= 1.5f)
+                {
+                    originalTransforms.Add(ioEntity, new OriginalTransforms(transform, worldDiff));
+                    transform.position += worldDiff;
+                }
+            }
+
+            if (checkOutputs)
+            {
+                if (ioEntity.outputs == null)
+                    return false;
+
+                for (int i = 0; i < ioEntity.outputs.Length; i++)
+                {
+                    IOEntity.IOSlot ioOutput = ioEntity.outputs[i];
+                    if (ioOutput == null || ioOutput.linePoints == null || ioOutput.linePoints.Length == 0)
+                        continue;
+
+                    Vector3 linePoint = ioOutput.linePoints[ioOutput.linePoints.Length - 1];
+                    if (linePoint == Vector3.zero)
+                        continue;
+
+                    ApplyPositionCorrection(linePoint, ioOutput.handlePosition);
+                    return true;
+                }
+            }
+            else
+            {
+                if (ioEntity.inputs == null)
+                    return false;
+
+                for (int i = 0; i < ioEntity.inputs.Length; i++)
+                {
+                    IOEntity.IOSlot ioInput = ioEntity.inputs[i];
+                    if (!GetConnectedIOEntity(ioInput, true, out IOEntity outputIoEntity, out IOEntity.IOSlot ioOutput))
+                        continue;
+
+                    if (ioOutput.linePoints == null || ioOutput.linePoints.Length == 0)
+                        continue;
+
+                    Vector3 linePoint = ioOutput.linePoints[0];
+                    if (linePoint == Vector3.zero)
+                        continue;
+
+                    Vector3 localLinePoint;
+                    if (originalTransforms.TryGetValue(outputIoEntity, out var origTransform))
+                    {
+                        Vector3 scaledLinePoint = new Vector3(
+                            origTransform.localScale.x * linePoint.x,
+                            origTransform.localScale.y * linePoint.y,
+                            origTransform.localScale.z * linePoint.z
+                        );
+                        Vector3 rotatedLinePoint = origTransform.rotation * scaledLinePoint;
+                        Vector3 worldLinePoint = origTransform.position + rotatedLinePoint;
+
+                        localLinePoint = transform.InverseTransformPoint(worldLinePoint);
+                    }
+                    else
+                    {
+                        localLinePoint = transform.InverseTransformPoint(outputIoEntity.transform.TransformPoint(linePoint));
+                    }
+
+                    ApplyPositionCorrection(localLinePoint, ioInput.handlePosition);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private void AdjustLinePointPositions(IOEntity ioEntity, OriginalTransforms originalTransform)
+        {
+            Transform transform = ioEntity.transform;
+            Vector3 diff = originalTransform.diff;
+
+            if (ioEntity.outputs != null)
+            {
+                for (int i = 0; i < ioEntity.outputs.Length; i++)
+                {
+                    IOEntity.IOSlot ioOutput = ioEntity.outputs[i];
+                    if (!GetConnectedIOEntity(ioOutput, false, out IOEntity inputIoEntity, out IOEntity.IOSlot ioInput))
+                        continue;
+
+                    if (ioOutput.linePoints != null)
+                    {
+                        ioOutput.originPosition = transform.position;
+                        int max = ioOutput.linePoints.Length - 1;
+                        for (int x = 0; x < ioOutput.linePoints.Length; x++)
+                        {
+                            if (ioOutput.linePoints[x] == Vector3.zero)
+                                continue;
+
+                            if (x == 0)
+                                ioOutput.linePoints[x] = transform.InverseTransformPoint(inputIoEntity.transform.TransformPoint(inputIoEntity.inputs[ioOutput.connectedToSlot].handlePosition));
+                            else if (x == max)
+                                ioOutput.linePoints[x] = ioOutput.handlePosition;
+                            else
+                                ioOutput.linePoints[x] -= diff;
+                        }
+                    }
+                }
+            }
+
+            if (ioEntity.inputs != null)
+            {
+                for (int i = 0; i < ioEntity.inputs.Length; i++)
+                {
+                    IOEntity.IOSlot ioInput = ioEntity.inputs[i];
+                    if (!GetConnectedIOEntity(ioInput, true, out IOEntity outputIoEntity, out IOEntity.IOSlot ioOutput))
+                        continue;
+
+                    if (ioOutput.linePoints == null || ioOutput.linePoints.Length == 0)
+                        continue;
+
+                    if (ioOutput.linePoints[0] == Vector3.zero)
+                        continue;
+
+                    ioOutput.linePoints[0] = outputIoEntity.transform.InverseTransformPoint(transform.TransformPoint(ioInput.handlePosition));
+                }
+            }
+
+            ioEntity.SendNetworkUpdate();
+            ioEntity.RefreshIndustrialPreventBuilding();
         }
 
         private void PasteEntity(Dictionary<string, object> data, PasteData pasteData, BaseEntity parent = null)
@@ -2142,6 +2365,10 @@ namespace Oxide.Plugins
                 {
                     doorManipulator.SetTargetDoor(door);
                 }
+                else
+                {
+                    pasteData.FinalProcessingActions.Add(() => FindAndAssignTargetDoor(doorManipulator));
+                }
             }
 
             var conveyor = ioEntity as IndustrialConveyor;
@@ -2333,6 +2560,9 @@ namespace Oxide.Plugins
                         }
                     }
                 }
+
+                if (pasteData.checkPosition != null)
+                    pasteData.checkPosition.Add(ioEntity);
             }
 
             ioEntity.MarkDirty();
@@ -4147,6 +4377,7 @@ namespace Oxide.Plugins
             public BasePlayer BasePlayer;
             public List<StabilityEntity> StabilityEntities = new List<StabilityEntity>();
             public List<IndustrialStorageAdaptor> industrialStorageAdaptors = new List<IndustrialStorageAdaptor>();
+            public List<IOEntity> checkPosition;
             public Quaternion QuaternionRotation;
             public Action CallbackFinished;
             public Action<BaseEntity> CallbackSpawned;
@@ -4170,7 +4401,23 @@ namespace Oxide.Plugins
             public Stopwatch Sw = new Stopwatch();
 #endif
         }
-        
+
+        public struct OriginalTransforms
+        {
+            public Vector3 position;
+            public Quaternion rotation;
+            public Vector3 localScale;
+            public Vector3 diff;
+
+            public OriginalTransforms(Transform transform, Vector3 localDiff)
+            {
+                position = transform.position;
+                rotation = transform.rotation;
+                localScale = transform.localScale;
+                diff = transform.InverseTransformDirection(localDiff);
+            }
+        }
+
         private VersionNumber ParseVersionNumber(string versionString)
         {
             string[] array = versionString.Split(new char[1] { '.' }, StringSplitOptions.RemoveEmptyEntries);
