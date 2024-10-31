@@ -3192,10 +3192,8 @@ namespace Oxide.Plugins
 
                 entitySlots.Add(slotEntity);
 
-                if (slotName != "lock" || !slotData.ContainsKey("code"))
-                    continue;
-
-                TryPasteLocks(slotEntity, slotData, pasteData);
+                if (slotName == "lock" && slotData.ContainsKey("code"))
+                    TryPasteLocks(slotEntity, slotData, pasteData);
 
                 pasteData.CallbackSpawned?.Invoke(ent);
             }
