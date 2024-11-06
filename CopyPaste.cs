@@ -1452,7 +1452,7 @@ namespace Oxide.Plugins
 
             if (!pasteData.EnableSaving)
             {
-                entity.enableSaving = false;
+                entity.EnableSaving(false);
             }
 
             if (entity is ModularCar modularCar && data.TryGetValue("children", out var childrenObj))
@@ -3215,7 +3215,7 @@ namespace Oxide.Plugins
 
                 if (!pasteData.EnableSaving)
                 {
-                    slotEntity.enableSaving = false;
+                    slotEntity.EnableSaving(false);
                 }
 
                 slotEntity.Spawn();
