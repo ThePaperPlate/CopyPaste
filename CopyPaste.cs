@@ -1366,6 +1366,9 @@ namespace Oxide.Plugins
                 }
             }
 
+            if (prefabname == "assets/rust.ai/nextai/testridablehorse.prefab")
+                prefabname = "assets/content/vehicles/horse/ridablehorse2.prefab";
+
             if (entity == null)
                 entity = GameManager.server.CreateEntity(prefabname, pos, rot);
 
