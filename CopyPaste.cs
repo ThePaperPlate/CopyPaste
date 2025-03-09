@@ -1351,8 +1351,8 @@ namespace Oxide.Plugins
                     else
                         entity.SetParent(parent);
 
-                    // Custom door controllers and auto turrets don't have null checks for deployedBy baseplayer
-                    if (entity is not CustomDoorManipulator && entity is not AutoTurret)
+                    // Skip entities that don't have null checks for deployedBy baseplayer
+                    if (entity is not CustomDoorManipulator && entity is not AutoTurret && entity is not GrowableEntity)
                         entity.OnDeployed(parent, null, _emptyItem);
 
                     transform.localPosition = localPos;
