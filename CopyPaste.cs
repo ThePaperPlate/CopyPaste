@@ -2750,12 +2750,18 @@ namespace Oxide.Plugins
                     }
                 }
 
-                if (item?.contents?.itemList != null && item.contents.itemList.Count > 0)
+                if (item.contents != null)
                 {
-                    var itemContents = new Dictionary<string, object>();
-                    ExtractInventory(itemContents, item.contents, copyData);
-                    if (itemContents.ContainsKey("items"))
-                        itemdata["items"] = itemContents["items"];
+                    if (item.contents.capacity > 0 && item.info != null && item.info.HasComponent<ItemModContainerArmorSlot>())
+                        itemdata["armorSlotCapacity"] = item.contents.capacity;
+
+                    if (item.contents.itemList != null && item.contents.itemList.Count > 0)
+                    {
+                        var itemContents = new Dictionary<string, object>();
+                        ExtractInventory(itemContents, item.contents, copyData);
+                        if (itemContents.ContainsKey("items"))
+                            itemdata["items"] = itemContents["items"];
+                    }
                 }
 
                 itemlist.Add(itemdata);
@@ -2871,6 +2877,13 @@ namespace Oxide.Plugins
                         var oldId = Convert.ToUInt64(item["subEntity"]);
                         if (oldId != 0)
                             pasteData.ItemsWithSubEntity.Add(oldId, i);
+                    }
+
+                    if (item.TryGetValue("armorSlotCapacity", out var armorSlotCapacityObj))
+                    {
+                        var armorSlotCapacity = Convert.ToInt32(armorSlotCapacityObj);
+                        if (armorSlotCapacity > 0 && i.info != null && i.info.TryGetComponent<ItemModContainerArmorSlot>(out var armorSlot))
+                            armorSlot.CreateAtCapacity(armorSlotCapacity, i);
                     }
 
                     if (item.ContainsKey("items"))
