@@ -2708,6 +2708,9 @@ namespace Oxide.Plugins
                     }
                 }
 
+                if (item.HasItemOwnership())
+                    itemdata.Add("ownershipShares", item.ownershipShares.ToArray());
+
                 if (!string.IsNullOrEmpty(item.name))
                     itemdata["name"] = item.name;
 
@@ -2884,6 +2887,37 @@ namespace Oxide.Plugins
                         var armorSlotCapacity = Convert.ToInt32(armorSlotCapacityObj);
                         if (armorSlotCapacity > 0 && i.info != null && i.info.TryGetComponent<ItemModContainerArmorSlot>(out var armorSlot))
                             armorSlot.CreateAtCapacity(armorSlotCapacity, i);
+                    }
+
+                    if (item.TryGetValue("ownershipShares", out var ownershipSharesObj))
+                    {
+                        var ownershipShares = ownershipSharesObj as List<object>;
+                        if (ownershipShares != null && ownershipShares.Count > 0)
+                        {
+                            i.InitializeItemOwnership();
+                            if (i.ownershipShares != null)
+                            {
+                                i.ownershipShares.Clear();
+                                for (var num = 0; num < ownershipShares.Count; num++)
+                                {
+                                    var ownershipShare = ownershipShares[num] as Dictionary<string, object>;
+                                    if (ownershipShare == null)
+                                        continue;
+
+                                    var itemOwnershipShare = new ItemOwnershipShare();
+
+                                    if (ownershipShare.TryGetValue("username", out var username))
+                                        itemOwnershipShare.username = (string) username;
+                                    if (ownershipShare.TryGetValue("reason", out var reason))
+                                        itemOwnershipShare.reason = (string) reason;
+                                    if (ownershipShare.TryGetValue("amount", out var amount))
+                                        itemOwnershipShare.amount = Convert.ToInt32(amount);
+
+                                    if (itemOwnershipShare.IsValid())
+                                        i.ownershipShares.Add(itemOwnershipShare);
+                                }
+                            }
+                        }
                     }
 
                     if (item.ContainsKey("items"))
