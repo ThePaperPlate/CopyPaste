@@ -2447,6 +2447,15 @@ namespace Oxide.Plugins
                 if (pasteData.IsItemReplace)
                     itemid = GetItemId(itemid);
 
+                var targetPos = -1;
+                if (item.ContainsKey("position"))
+                    targetPos = Convert.ToInt32(item["position"]);
+
+                if (entity is BaseOven ov && ov.visualFood && targetPos >= ov._inputSlotIndex &&
+                    targetPos < ov._inputSlotIndex + ov.inputSlots &&
+                    ItemManager.FindItemDefinition(itemid)?.ItemModCookable == null)
+                    continue;
+
                 var i = ItemManager.CreateByItemID(itemid, itemamount, itemskin);
 
                 if (i != null)
@@ -2537,11 +2546,6 @@ namespace Oxide.Plugins
                             }
                         }
                     }
-
-                    var targetPos = -1;
-
-                    if (item.ContainsKey("position"))
-                        targetPos = Convert.ToInt32(item["position"]);
 
                     var heldEntity = i.GetHeldEntity();
                     if (heldEntity != null && heldEntity is Detonator detonator)
