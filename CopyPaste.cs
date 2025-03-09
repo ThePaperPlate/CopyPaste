@@ -1119,6 +1119,14 @@ namespace Oxide.Plugins
             return itemId;
         }
 
+        private string GetPrefabName(string prefabName)
+        {
+            if (ReplacePrefab.TryGetValue(prefabName, out string replacementPrefab))
+                return replacementPrefab;
+
+            return prefabName;
+        }
+
         private bool HasAccess(IPlayer player, string permName)
         {
             return player.IsAdmin || player.HasPermission(permName);
@@ -1333,7 +1341,7 @@ namespace Oxide.Plugins
             }
 
             if (entity == null)
-                entity = GameManager.server.CreateEntity(prefabname, pos, rot);
+                entity = GameManager.server.CreateEntity(GetPrefabName(prefabname), pos, rot);
 
             if (entity == null)
                 return;
@@ -3162,7 +3170,7 @@ namespace Oxide.Plugins
                     continue;
 
                 var slotData = structure[slotName] as Dictionary<string, object>;
-                var slotEntity = GameManager.server.CreateEntity((string)slotData?["prefabname"], Vector3.zero);
+                var slotEntity = GameManager.server.CreateEntity(GetPrefabName((string)slotData?["prefabname"]), Vector3.zero);
                 if (slotEntity == null)
                     continue;
 
@@ -3415,6 +3423,12 @@ namespace Oxide.Plugins
 
             UndoLoop(entities, player);
         }
+
+        private static readonly Dictionary<string, string> ReplacePrefab = new Dictionary<string, string>
+        {
+            { "assets/rust.ai/nextai/testridablehorse.prefab", "assets/content/vehicles/horse/ridablehorse2.prefab" },
+            { "assets/prefabs/deployable/windmill/windmillsmall/electric.windmill.small.prefab", "assets/prefabs/deployable/windmill/electric.windmill.small.prefab"}
+        };
 
         //Replace between old ItemID to new ItemID
 
