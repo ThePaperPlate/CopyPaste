@@ -2410,6 +2410,9 @@ namespace Oxide.Plugins
                 var itemskin = item.ContainsKey("skinid") ? ulong.Parse(item["skinid"].ToString()) : 0;
                 var dataInt = item.ContainsKey("dataInt") ? Convert.ToInt32(item["dataInt"]) : 0;
 
+                if (itemid == 0 || itemamount == 0)
+                    continue;
+
                 var growableEntity = entity as GrowableEntity;
                 if (growableEntity != null)
                 {
