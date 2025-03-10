@@ -965,6 +965,33 @@ namespace Oxide.Plugins
                     data.Add("towingEntityId", ridableHorse2.towingEntityId.Value);
             }
 
+            if (entity is FarmableAnimal farmableAnimal && farmableAnimal.IsValid() && !farmableAnimal.IsDestroyed)
+            {
+                data["hunger"] = farmableAnimal.AnimalHunger;
+                data["thirst"] = farmableAnimal.AnimalThirst;
+                data["love"] = farmableAnimal.AnimalLove;
+                data["sunlight"] = farmableAnimal.AnimalSunlight;
+                data["animalName"] = farmableAnimal.AnimalName;
+            }
+
+            if (entity is ChickenCoop chickenCoop && chickenCoop.IsValid() && !chickenCoop.IsDestroyed)
+            {
+                if (chickenCoop.HasFlag(BaseEntity.Flags.Reserved1))
+                {
+                    var timeUntilHatches = Facepunch.Pool.Get<List<string>>();
+                    for (var i = 0; i < chickenCoop.Animals.Count; i++)
+                    {
+                        var animal = chickenCoop.Animals[i];
+                        if (animal.TimeUntilHatch > 0.0)
+                            timeUntilHatches.Add(animal.TimeUntilHatch.ToString());
+                    }
+                    if (timeUntilHatches.Count > 0)
+                        data.Add("timeUntilHatches", timeUntilHatches.ToArray());
+
+                    Facepunch.Pool.FreeUnmanaged(ref timeUntilHatches);
+                }
+            }
+
             var ioEntity = entity as IOEntity;
 
             if (ioEntity.IsValid() && !ioEntity.IsDestroyed)
@@ -2382,6 +2409,52 @@ namespace Oxide.Plugins
                 else
                 {
                     mixingTable.InvokeRepeating(mixingTable.TickMix, 1f, 1f);
+                }
+            }
+
+            if (entity is FarmableAnimal farmableAnimal)
+            {
+                if (data.TryGetValue("hunger", out var hunger))
+                    farmableAnimal.AnimalHunger = Convert.ToSingle(hunger);
+                if (data.TryGetValue("thirst", out var thirst))
+                    farmableAnimal.AnimalThirst = Convert.ToSingle(thirst);
+                if (data.TryGetValue("love", out var love))
+                    farmableAnimal.AnimalLove = Convert.ToSingle(love);
+                if (data.TryGetValue("sunlight", out var sunlight))
+                    farmableAnimal.AnimalSunlight = Convert.ToSingle(sunlight);
+                if (data.TryGetValue("animalName", out var animalName))
+                    farmableAnimal.AnimalName = (string) animalName;
+
+                if (parent != null && parent is ChickenCoop chickenCoopParent &&
+                    chickenCoopParent.ChickenPrefab.resourceID == entity.prefabID)
+                {
+                    ChickenCoop.AnimalStatus animalStatus = new ChickenCoop.AnimalStatus();
+                    animalStatus.SpawnedAnimal.Set(farmableAnimal);
+                    chickenCoopParent.Animals.Add(animalStatus);
+                }
+
+                farmableAnimal.SendNetworkUpdate();
+            }
+
+            if (entity is ChickenCoop chickenCoop)
+            {
+                if (entity.HasFlag(BaseEntity.Flags.Reserved1) &&
+                    data.TryGetValue("timeUntilHatches", out var timeUntilHatchesObj))
+                {
+                    var timeUntilHatches = timeUntilHatchesObj as List<object>;
+                    if (timeUntilHatches != null && timeUntilHatches.Count > 0)
+                    {
+                        for (var i = 0; i < timeUntilHatches.Count; i++)
+                        {
+                            chickenCoop.Animals.Add(new ChickenCoop.AnimalStatus()
+                            {
+                                TimeUntilHatch = (TimeUntil) Convert.ToSingle(timeUntilHatches[i])
+                            });
+                        }
+                        if (!chickenCoop.IsInvoking(new Action(chickenCoop.CheckEggHatchState)))
+                            chickenCoop.InvokeRepeating(new Action(chickenCoop.CheckEggHatchState), 10f, 10f);
+                        chickenCoop.SendNetworkUpdate();
+                    }
                 }
             }
 
