@@ -1351,9 +1351,13 @@ namespace Oxide.Plugins
                     else
                         entity.SetParent(parent);
 
-                    // Skip entities that don't have null checks for deployedBy baseplayer
-                    if (entity is not CustomDoorManipulator && entity is not AutoTurret && entity is not GrowableEntity)
+                    // Skip OnDeployed() for entities that don't properly handle null "deployedBy" or "fromItem.info"
+                    if (entity is not CustomDoorManipulator && entity is not AutoTurret &&
+                        entity is not GrowableEntity && entity is not Signage)
+                    {
                         entity.OnDeployed(parent, null, _emptyItem);
+                    }
+
 
                     transform.localPosition = localPos;
                     transform.localRotation = localRot;
