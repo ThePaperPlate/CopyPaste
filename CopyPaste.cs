@@ -1310,7 +1310,7 @@ namespace Oxide.Plugins
             {
 
                 // Adjust IOEntity positions to fix alignment issues for older file versions
-                if (pasteData.Version <= new VersionNumber(4, 2, 0))
+                if (pasteData.Version < new VersionNumber(4, 2, 0))
                     pasteData.checkPosition = Pool.Get<List<IOEntity>>();
 
                 foreach (var ioData in pasteData.EntityLookup.Values.ToArray())
