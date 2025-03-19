@@ -2963,11 +2963,11 @@ namespace Oxide.Plugins
                     if (item.ContainsKey("condition"))
                         i.condition = Convert.ToSingle(item["condition"]);
 
-                    if (item.ContainsKey("text"))
-                        i.text = item["text"].ToString();
+                    if (item.TryGetValue("text", out object obj) && obj is string str1 && !string.IsNullOrEmpty(str1))
+                        i.text = str1;
 
-                    if (item.ContainsKey("name"))
-                        i.name = item["name"]?.ToString();
+                    if (item.TryGetValue("name", out obj) && obj is string str2 && !string.IsNullOrEmpty(str2))
+                        i.name = str2;
 
                     if (item.ContainsKey("blueprintTarget"))
                     {
