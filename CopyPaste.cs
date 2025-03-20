@@ -2976,7 +2976,8 @@ namespace Oxide.Plugins
                         if (pasteData.IsItemReplace)
                             blueprintTarget = GetItemId(blueprintTarget);
 
-                        i.blueprintTarget = blueprintTarget;
+                        if (blueprintTarget != 0)
+                            i.blueprintTarget = blueprintTarget;
                     }
 
                     if (dataInt > 0)
