@@ -2787,11 +2787,20 @@ namespace Oxide.Plugins
             {
                 if (data["entity"] is BaseEntity subEntity && subEntity.IsValid() && !subEntity.IsDestroyed && subEntity.net.ID.IsValid)
                 {
-                    if (item.instanceData == null)
-                        item.instanceData = new ProtoBuf.Item.InstanceData();
-
+                    InitializeItemInstanceData(item);
                     item.instanceData.subEntity = subEntity.net.ID;
                 }
+            }
+        }
+
+        private void InitializeItemInstanceData(Item item)
+        {
+            if (item.instanceData == null)
+            {
+                item.instanceData = new ProtoBuf.Item.InstanceData()
+                {
+                    ShouldPool = false
+                };
             }
         }
 
@@ -2804,12 +2813,16 @@ namespace Oxide.Plugins
                 var itemdata = new Dictionary<string, object>
                 {
                     { "condition", item.condition.ToString() },
+                    { "maxCondition", item.maxCondition.ToString() },
                     { "id", item.info.itemid },
                     { "amount", item.amount },
                     { "skinid", item.skin },
+                    { "fuel", item.fuel },
                     { "position", item.position },
                     { "blueprintTarget", item.blueprintTarget },
-                    { "dataInt", item.instanceData?.dataInt ?? 0 }
+                    { "blueprintAmount", item.blueprintAmount },
+                    { "dataInt", item.instanceData?.dataInt ?? 0 },
+                    { "dataFloat", item.instanceData?.dataFloat ?? 0f }
                 };
 
                 if (item.instanceData != null)
@@ -2899,6 +2912,8 @@ namespace Oxide.Plugins
             if (data.ContainsKey("items"))
                 items = data["items"] as List<object>;
 
+            object getObj;
+
             foreach (var itemDef in items)
             {
                 var item = itemDef as Dictionary<string, object>;
@@ -2906,6 +2921,7 @@ namespace Oxide.Plugins
                 var itemamount = Convert.ToInt32(item["amount"]);
                 var itemskin = item.ContainsKey("skinid") ? ulong.Parse(item["skinid"].ToString()) : 0;
                 var dataInt = item.ContainsKey("dataInt") ? Convert.ToInt32(item["dataInt"]) : 0;
+                var dataFloat = item.TryGetValue("dataFloat", out getObj) ? Convert.ToSingle(getObj) : 0f;
 
                 if (itemid == 0 || itemamount == 0)
                     continue;
@@ -2960,14 +2976,31 @@ namespace Oxide.Plugins
 
                 if (i != null)
                 {
-                    if (item.ContainsKey("condition"))
-                        i.condition = Convert.ToSingle(item["condition"]);
+                    if (i.hasCondition)
+                    {
+                        if (item.TryGetValue("maxCondition", out getObj))
+                        {
+                            float maxCondition = Convert.ToSingle(getObj);
+                            if (maxCondition > 0f)
+                                i.maxCondition = maxCondition;
+                        }
+
+                        if (item.TryGetValue("condition", out getObj))
+                            i.condition = Convert.ToSingle(getObj);
+                    }
 
                     if (item.TryGetValue("text", out object obj) && obj is string str1 && !string.IsNullOrEmpty(str1))
                         i.text = str1;
 
                     if (item.TryGetValue("name", out obj) && obj is string str2 && !string.IsNullOrEmpty(str2))
                         i.name = str2;
+
+                    if (item.TryGetValue("fuel", out getObj))
+                    {
+                        float fuel = Convert.ToSingle(getObj);
+                        if (fuel > 0)
+                            i.fuel = fuel;
+                    }
 
                     if (item.ContainsKey("blueprintTarget"))
                     {
@@ -2980,13 +3013,23 @@ namespace Oxide.Plugins
                             i.blueprintTarget = blueprintTarget;
                     }
 
-                    if (dataInt > 0)
+                    if (item.TryGetValue("blueprintAmount", out getObj))
                     {
-                        i.instanceData = new ProtoBuf.Item.InstanceData()
-                        {
-                            ShouldPool = false,
-                            dataInt = dataInt
-                        };
+                        var blueprintAmount = Convert.ToInt32(getObj);
+                        if (blueprintAmount != 0)
+                            i.blueprintAmount = blueprintAmount;
+                    }
+
+                    if (dataInt != 0)
+                    {
+                        InitializeItemInstanceData(i);
+                        i.instanceData.dataInt = dataInt;
+                    }
+
+                    if (dataFloat != 0f)
+                    {
+                        InitializeItemInstanceData(i);
+                        i.instanceData.dataFloat = dataFloat;
                     }
 
                     if (item.ContainsKey("IsOn"))
