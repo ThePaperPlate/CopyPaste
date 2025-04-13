@@ -1088,6 +1088,17 @@ namespace Oxide.Plugins
                     ioData.Add("industrialconveyorfilteritems", SerializeConveyorFilter(conveyor.filterItems));
                 }
 
+                var audioVisual = ioEntity as AudioVisualisationEntity;
+                if (audioVisual != null)
+                {
+                    ioData.Add("colour", (int)audioVisual.currentColour);
+                    ioData.Add("volumeSensitivity", (int)audioVisual.currentVolumeSensitivity);
+                    ioData.Add("speed", (int)audioVisual.currentSpeed);
+                    ioData.Add("gradient", audioVisual.currentGradient);
+                    if (audioVisual.connectedTo.IsValid(true))
+                        ioData.Add("connectedTo", audioVisual.connectedTo.uid.Value);
+                }
+
                 var digitalClock = ioEntity as DigitalClock;
                 if (digitalClock != null)
                 {
@@ -2621,6 +2632,25 @@ namespace Oxide.Plugins
 
                 conveyor.filterItems = DeSerializeConveyorFilter(ioData["industrialconveyorfilteritems"].ToString());
                 conveyor.SendNetworkUpdate();
+            }
+
+            var audioVisual = ioEntity as AudioVisualisationEntity;
+            if (audioVisual != null)
+            {
+                if (ioData.TryGetValue("colour", out object audioObj))
+                    audioVisual.currentColour = (AudioVisualisationEntity.LightColour) Convert.ToInt32(audioObj);
+                if (ioData.TryGetValue("volumeSensitivity", out audioObj))
+                    audioVisual.currentVolumeSensitivity = (AudioVisualisationEntity.VolumeSensitivity) Convert.ToInt32(audioObj);
+                if (ioData.TryGetValue("speed", out audioObj))
+                    audioVisual.currentSpeed = (AudioVisualisationEntity.Speed) Convert.ToInt32(audioObj);
+                if (ioData.TryGetValue("gradient", out audioObj))
+                    audioVisual.currentGradient = Convert.ToInt32(audioObj);
+                if (ioData.TryGetValue("connectedTo", out audioObj))
+                {
+                    var oldId = Convert.ToUInt64(audioObj);
+                    if (oldId != 0 && pasteData.EntityLookup.TryGetValue(oldId, out var newConnectedTo) && newConnectedTo.TryGetValue("newId", out audioObj))
+                        audioVisual.connectedTo.uid = new NetworkableId(Convert.ToUInt64(audioObj));
+                }
             }
 
             var digitalClock = ioEntity as DigitalClock;
