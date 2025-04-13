@@ -1008,6 +1008,10 @@ namespace Oxide.Plugins
                 data.Add("health", constructableEntity.Health());
             }
 
+            var boomBox = entity.GetComponent<BoomBox>();
+            if (boomBox != null)
+                ExtractBoomBox(data, boomBox);
+
             var ioEntity = entity as IOEntity;
 
             if (ioEntity.IsValid() && !ioEntity.IsDestroyed)
@@ -2382,6 +2386,31 @@ namespace Oxide.Plugins
                 entity.SetFlag(flag.Key, flag.Value);
             }
             
+            if (data.TryGetValue("boomBox", out var boomBoxObj) &&
+                boomBoxObj is Dictionary<string, object> boomBoxData && boomBoxData != null &&
+                entity.TryGetComponent<BoomBox>(out var boomBox))
+            {
+                PopulateBoomBox(boomBoxData, boomBox);
+                if (boomBox.IsOn())
+                {
+                    boomBox.ServerTogglePlay(false);
+                    if (boomBox.HasFlag(BoomBox.HasCassette))
+                    {
+                        // Requires the cassette item subentity to exist before it can play
+                        pasteData.FinalProcessingActions.Add(() =>
+                        {
+                            if (entity.IsValid() && !entity.IsDestroyed && boomBox != null)
+                                boomBox.Invoke(() => { boomBox.ServerTogglePlay(true); }, 1f);
+                        });
+                    }
+                    else
+                    {
+                        entity.ClientRPC<string>(RpcTarget.NetworkGroup("OnRadioIPChanged"), boomBox.CurrentRadioIp);
+                        boomBox.ServerTogglePlay(true);
+                    }
+                }
+            }
+
             var industrialCrafter = entity as IndustrialCrafter;
             if (industrialCrafter != null)
             {
@@ -2885,6 +2914,9 @@ namespace Oxide.Plugins
                         if (children.Count > 0)
                             itemdata["children"] = children;
                     }
+
+                    if (heldEnt is HeldBoomBox heldBoomBox && heldBoomBox.BoxController != null)
+                        ExtractBoomBox(itemdata, heldBoomBox.BoxController);
                 }
 
                 if (item.contents != null)
@@ -3129,6 +3161,13 @@ namespace Oxide.Plugins
                                 }
                             }
                         }
+
+                        if (item.TryGetValue("boomBox", out var boomBoxObj) &&
+                            boomBoxObj is Dictionary<string, object> boomBoxData && boomBoxData != null &&
+                            heldent is HeldBoomBox heldBoomBox)
+                        {
+                            PopulateBoomBox(boomBoxData, heldBoomBox.BoxController);
+                        }
                     }
 
                     var heldEntity = i.GetHeldEntity();
@@ -3180,6 +3219,33 @@ namespace Oxide.Plugins
 
                 signData["amount"] = textureIDs.Length;
                 data.Add("sign", signData);
+            }
+        }
+
+        void ExtractBoomBox(Dictionary<string, object> data, BoomBox boomBox)
+        {
+            if (!string.IsNullOrEmpty(boomBox.CurrentRadioIp))
+            {
+                data.Add("boomBox", new Dictionary<string, object>()
+                {
+                    { "radioIp", boomBox.CurrentRadioIp },
+                    { "radioBy", boomBox.AssignedRadioBy }
+                });
+            }
+        }
+
+        void PopulateBoomBox(Dictionary<string, object> data, BoomBox boomBox)
+        {
+            if (boomBox != null)
+            {
+                if (data.TryGetValue("radioIp", out var boomBoxObj))
+                {
+                    var radioIp = boomBoxObj as string;
+                    if (!string.IsNullOrEmpty(radioIp) && BoomBox.IsStationValid(radioIp))
+                        boomBox.CurrentRadioIp = radioIp;
+                }
+                if (data.TryGetValue("radioBy", out boomBoxObj))
+                    boomBox.AssignedRadioBy = Convert.ToUInt64(boomBoxObj);
             }
         }
 
