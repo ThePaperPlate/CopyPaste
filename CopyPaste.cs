@@ -2405,22 +2405,36 @@ namespace Oxide.Plugins
                 if (boomBox.IsOn())
                 {
                     boomBox.ServerTogglePlay(false);
-                    if (boomBox.HasFlag(BoomBox.HasCassette))
+                    pasteData.FinalProcessingActions.Add(() =>
                     {
-                        // Requires the cassette item subentity to exist before it can play
-                        pasteData.FinalProcessingActions.Add(() =>
+                        if (boomBox == null)
+                            return;
+
+                        boomBox.Invoke(() =>
                         {
-                            if (entity.IsValid() && !entity.IsDestroyed && boomBox != null)
-                                boomBox.Invoke(() => { boomBox.ServerTogglePlay(true); }, 1f);
-                        });
-                    }
-                    else
-                    {
-                        entity.ClientRPC<string>(RpcTarget.NetworkGroup("OnRadioIPChanged"), boomBox.CurrentRadioIp);
-                        boomBox.ServerTogglePlay(true);
-                    }
+                            if (!boomBox.baseEntity.IsValid() || boomBox.baseEntity.IsDestroyed)
+                                return;
+
+                            if (!boomBox.HasFlag(BoomBox.HasCassette))
+                                boomBox.baseEntity.ClientRPC<string>(RpcTarget.NetworkGroup("OnRadioIPChanged"), boomBox.CurrentRadioIp);
+
+                            boomBox.ServerTogglePlay(true);
+
+                            foreach (var connectedSpeaker in pasteData.ConnectedSpeakers) {
+                                if (connectedSpeaker.IsValid() && !connectedSpeaker.IsDestroyed)
+                                {
+                                    connectedSpeaker.SetFlag(BaseEntity.Flags.Reserved8, false);
+                                    connectedSpeaker.SetFlag(BaseEntity.Flags.Reserved8, true);
+                                }
+                            }
+                        }, 1f);
+                    });
                 }
             }
+
+            var connectedSpeaker = entity as ConnectedSpeaker;
+            if (connectedSpeaker != null && connectedSpeaker.HasFlag(BaseEntity.Flags.Reserved8))
+                pasteData.ConnectedSpeakers.Add(connectedSpeaker);
 
             var industrialCrafter = entity as IndustrialCrafter;
             if (industrialCrafter != null)
@@ -4776,6 +4790,7 @@ namespace Oxide.Plugins
             public BasePlayer BasePlayer;
             public List<StabilityEntity> StabilityEntities = new List<StabilityEntity>();
             public List<IndustrialStorageAdaptor> industrialStorageAdaptors = new List<IndustrialStorageAdaptor>();
+            public List<ConnectedSpeaker> ConnectedSpeakers = new List<ConnectedSpeaker>();
             public List<IOEntity> checkPosition;
             public Quaternion QuaternionRotation;
             public Action CallbackFinished;
