@@ -966,7 +966,7 @@ namespace Oxide.Plugins
                 });
             }
 
-            var ridableHorse2 = entity as RidableHorse2;
+            var ridableHorse2 = entity as RidableHorse;
             if (ridableHorse2 != null)
             {
                 data.Add("currentBreedIndex", ridableHorse2.currentBreedIndex);
@@ -2307,7 +2307,7 @@ namespace Oxide.Plugins
                 vendingMachine.FullUpdate();
             }
 
-            var ridableHorse2 = entity as RidableHorse2;
+            var ridableHorse2 = entity as RidableHorse;
             if (ridableHorse2 != null)
             {
                 if (data.TryGetValue("currentBreedIndex", out var currentBreedIndexObj))
@@ -4106,7 +4106,8 @@ namespace Oxide.Plugins
 
         private static readonly Dictionary<string, string> ReplacePrefab = new Dictionary<string, string>
         {
-            { "assets/rust.ai/nextai/testridablehorse.prefab", "assets/content/vehicles/horse/ridablehorse2.prefab" },
+            { "assets/rust.ai/nextai/testridablehorse.prefab", "assets/content/vehicles/horse/ridablehorse.prefab" },
+            { "assets/content/vehicles/horse/ridablehorse2.prefab", "assets/content/vehicles/horse/ridablehorse.prefab" },
             { "assets/prefabs/deployable/windmill/windmillsmall/electric.windmill.small.prefab", "assets/prefabs/deployable/windmill/electric.windmill.small.prefab"}
         };
 
