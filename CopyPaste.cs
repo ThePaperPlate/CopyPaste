@@ -3157,6 +3157,13 @@ namespace Oxide.Plugins
                         if (armorSlotCapacity > 0 && i.info != null && i.info.TryGetComponent<ItemModContainerArmorSlot>(out var armorSlot))
                             armorSlot.CreateAtCapacity(armorSlotCapacity, i);
                     }
+                    else if (i.info != null && i.info.isWearable &&
+                             item.TryGetValue("items", out var rawSlotItems) &&
+                             rawSlotItems is List<object> { Count: > 0 } slotItems &&
+                             i.info.TryGetComponent<ItemModContainerArmorSlot>(out var armorSlot))
+                    {
+                        armorSlot.CreateAtCapacity(slotItems.Count, i);
+                    }
 
                     if (item.TryGetValue("ownershipShares", out var ownershipSharesObj))
                     {
