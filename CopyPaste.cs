@@ -724,10 +724,19 @@ namespace Oxide.Plugins
                 {
                     data.Add("customColour", buildingblock.customColour);
                 }
-                if (buildingblock.HasWallpaper())
+
+                if (buildingblock.HasWallpaper(0))
                 {
                     data.Add("wallpaperID", buildingblock.wallpaperID);
                     data.Add("wallpaperHealth", buildingblock.wallpaperHealth);
+                    data.Add("wallpaperRotation", buildingblock.wallpaperRotation);
+                }
+
+                if (buildingblock.HasWallpaper(1))
+                {
+                    data.Add("wallpaperID2", buildingblock.wallpaperID2);
+                    data.Add("wallpaperHealth2", buildingblock.wallpaperHealth2);
+                    data.Add("wallpaperRotation2", buildingblock.wallpaperRotation2);
                 }
             }
 
@@ -1795,13 +1804,32 @@ namespace Oxide.Plugins
                 if (data.TryGetValue("customColour", out customColour))
                     buildingBlock.SetCustomColour(Convert.ToUInt32(customColour));
 
-                object wallpaperHealth;
-                if (data.TryGetValue("wallpaperHealth", out wallpaperHealth))
-                    buildingBlock.wallpaperHealth = Convert.ToInt32(wallpaperHealth);
+                object rawValue;
+                for (int side = 0; side <= 1; side++)
+                {
+                    string idKey = side == 0 ? "wallpaperID" : "wallpaperID2";
 
-                object wallpaperID;
-                if (data.TryGetValue("wallpaperID", out wallpaperID))
-                    buildingBlock.SetWallpaper(Convert.ToUInt64(wallpaperID));
+                    if (data.TryGetValue(idKey, out rawValue))
+                    {
+                        ulong wallpaperId = Convert.ToUInt64(rawValue);
+                        float rotation = 0f;
+
+                        string rotationKey = side == 0 ? "wallpaperRotation" : "wallpaperRotation2";
+                        if (data.TryGetValue(rotationKey, out rawValue))
+                            rotation = Convert.ToSingle(rawValue);
+
+                        buildingBlock.SetWallpaper(wallpaperId, side, rotation);
+
+                        string healthKey = side == 0 ? "wallpaperHealth" : "wallpaperHealth2";
+                        if (data.TryGetValue(healthKey, out rawValue))
+                        {
+                            if (side == 0)
+                                buildingBlock.wallpaperHealth = Convert.ToSingle(rawValue);
+                            else
+                                buildingBlock.wallpaperHealth2 = Convert.ToSingle(rawValue);
+                        }
+                    }
+                }
             }
             else if (baseCombat != null)
                 baseCombat.SetHealth(baseCombat.MaxHealth());
