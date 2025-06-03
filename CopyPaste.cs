@@ -927,6 +927,13 @@ namespace Oxide.Plugins
                 data.Add("gridSlots", gridSlots);
             }
 
+            var commandBlock = entity as CommandBlock;
+            if (commandBlock != null)
+            {
+                data.Add("currentCommand", commandBlock.currentCommand);
+                data.Add("lastPlayerID", commandBlock.lastPlayerID);
+            }
+
             var phoneController = entity.GetComponent<PhoneController>();
             if (phoneController != null && phoneController.savedVoicemail != null && phoneController.savedVoicemail.Count > 0)
             {
@@ -2265,6 +2272,18 @@ namespace Oxide.Plugins
                         }
                     }
                 }
+            }
+
+            var commandBlock = entity as CommandBlock;
+            if (commandBlock != null)
+            {
+                object rawValue;
+                if (data.TryGetValue("currentCommand", out rawValue) &&
+                    rawValue is string rawCommand && !string.IsNullOrEmpty(rawCommand))
+                    commandBlock.currentCommand = rawCommand;
+
+                if (data.TryGetValue("lastPlayerID", out rawValue))
+                    commandBlock.lastPlayerID = Convert.ToUInt64(rawValue);
             }
 
             var phoneController = entity.GetComponent<PhoneController>();
