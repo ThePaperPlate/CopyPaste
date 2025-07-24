@@ -62,6 +62,14 @@ namespace Oxide.Plugins
             _undoPermission = "copypaste.undo",
             _subDirectory = "copypaste/";
 
+        private readonly HashSet<string> _dlcPrefabs = new();
+        private readonly HashSet<int> _dlcItemIds = new();
+        private readonly HashSet<ulong> _paidSkinIds = new();
+        private readonly Dictionary<string, ItemDefinition> _prefabToItemDef = new();
+        private readonly Dictionary<ItemDefinition, string> _itemDefToPrefab = new();
+        private bool _pasteReady;
+        private readonly List<PasteData> _pendingPastes = new();
+
         private Dictionary<string, Stack<List<BaseEntity>>> _lastPastes =
             new Dictionary<string, Stack<List<BaseEntity>>>();
 
@@ -127,6 +135,15 @@ namespace Oxide.Plugins
                 Width = width;
                 Height = height;
             }
+        }
+
+        public enum SkinsMode
+        {
+            NoSkins = 0,
+            AllSkins = 1,
+            NoPaidSkins = 2,
+            AllowSpecifiedOnly = 3,
+            BlockSpecifiedOnly = 4
         }
 
         //Config
@@ -209,7 +226,26 @@ namespace Oxide.Plugins
                 [JsonProperty(PropertyName = "EntityOwner (true/false)")]
                 [DefaultValue(true)]
                 public bool EntityOwner { get; set; } = true;
+
+                [JsonProperty(PropertyName = "DLC items and deployables (true/false)")]
+                [DefaultValue(true)]
+                public bool Dlc { get; set; } = true;
+
+                [JsonProperty(PropertyName = "Skins (0=no skins, 1=all, 2=no paid skins, 3=allow specified only, 4=block specified only)")]
+                [DefaultValue((int)CopyPaste.SkinsMode.AllSkins)]
+                public int SkinsMode { get; set; } = (int)CopyPaste.SkinsMode.AllSkins;
+
+                [JsonProperty(PropertyName = "Specified Skins (skin id, like 2601577757, or item shortname for redirected skins, like hazmatsuit.spacesuit)")]
+                public List<object> SpecifiedSkins { get; set; } = new();
+
+                [JsonIgnore]
+                public List<ulong> SpecifiedSkinIds = new();
+
+                [JsonIgnore]
+                public List<string> SpecifiedSkinRedirects = new();
+
             }
+
         }
 
         private void LoadVariables()
@@ -219,6 +255,27 @@ namespace Oxide.Plugins
             _config = Config.ReadObject<ConfigData>();
 
             _config.BlockedPrefabs ??= new();
+            _config.Paste.SpecifiedSkins ??= new();
+
+            if (!IsValidSkinsMode(_config.Paste.SkinsMode))
+            {
+                PrintWarning("Invalid config value specified for 'Skins', resetting to default of 1 (all skins)");
+                _config.Paste.SkinsMode = (int)SkinsMode.AllSkins;
+            }
+
+            for (var i = 0; i < _config.Paste.SpecifiedSkins.Count; i++)
+            {
+                var str = _config.Paste.SpecifiedSkins[i].ToString();
+                if (string.IsNullOrEmpty(str))
+                    continue;
+
+                if (UInt64.TryParse(str, out var skinid))
+                    _config.Paste.SpecifiedSkinIds.Add(skinid);
+                else if (ItemManager.FindItemDefinition(str) != null)
+                    _config.Paste.SpecifiedSkinRedirects.Add(str);
+                else
+                    PrintWarning($"Ignoring invalid item shortname in 'Specified Skins': {str}");
+            }
 
             Config.WriteObject(_config, true);
         }
@@ -233,6 +290,8 @@ namespace Oxide.Plugins
 
             Config.WriteObject(configData, true);
         }
+
+        private bool IsValidSkinsMode(int mode) => Enum.IsDefined(typeof(SkinsMode), mode);
 
         //Hooks
 
@@ -274,9 +333,137 @@ namespace Oxide.Plugins
                 Formatting = Formatting.Indented,
                 ReferenceLoopHandling = ReferenceLoopHandling.Ignore
             };
+
+            ProcessItemDefinitions();
         }
 
+        // Heavily influenced by k1lly0u's Player DLC API plugin
+        private void ProcessItemDefinitions()
+        {
+            if ((Steamworks.SteamInventory.Definitions?.Length ?? 0) == 0)
+            {
+                PrintWarning("Pasting not ready: waiting for Steam inventory definitions to be updated.");
+                timer.In(3f, ProcessItemDefinitions);
+                return;
+            }
+
+            const string WORKSHOP_ID = "workshopid";
+            foreach (Steamworks.InventoryDef inventoryDef in Steamworks.SteamInventory.Definitions)
+            {
+                if (ulong.TryParse(inventoryDef.GetProperty(WORKSHOP_ID), out ulong skinId))
+                    _paidSkinIds.Add(skinId);
+            }
+
+            for (int i = 0; i < ItemSkinDirectory.Instance.skins.Length; i++)
+            {
+                ItemSkinDirectory.Skin skin = ItemSkinDirectory.Instance.skins[i];
+                _paidSkinIds.Add((ulong)skin.id);
+            }
+
+            foreach (ItemDefinition itemDef in ItemManager.itemList)
+            {
+                string prefabPath = GetPrefabPathFromItemDef(itemDef);
+                if (!string.IsNullOrEmpty(prefabPath))
+                {
+                    _prefabToItemDef[prefabPath] = itemDef;
+                    _itemDefToPrefab[itemDef] = prefabPath;
+                }
+
+                if (IsDlcItem(itemDef))
+                {
+                    _dlcItemIds.Add(itemDef.itemid);
+                    if (!string.IsNullOrEmpty(prefabPath))
+                        _dlcPrefabs.Add(prefabPath);
+                }
+            }
+
+            Puts($"Skin detection initialized: {_paidSkinIds.Count} official skins, {_dlcItemIds.Count} DLC items. Processing {_pendingPastes.Count} queued paste(s).");
+
+            _pasteReady = true;
+            for (int i = 0; i < _pendingPastes.Count; i++)
+            {
+                var pasteData = _pendingPastes[i];
+                timer.Once(i * 0.1f, () => PasteLoop(pasteData));
+            }
+            _pendingPastes.Clear();
+        }
+
+        private string GetPrefabPathFromItemDef(ItemDefinition def)
+        {
+            if (def.TryGetComponent<ItemModDeployable>(out var deployable))
+                return deployable.entityPrefab.resourcePath;
+
+            if (def.TryGetComponent<ItemModEntity>(out var entity))
+                return entity.entityPrefab.resourcePath;
+
+            if (def.TryGetComponent<ItemModEntityReference>(out var entityRef))
+                return entityRef.entityPrefab.resourcePath;
+
+            return null;
+        }
+
+        public static bool IsDlcItem(ItemDefinition definition)
+        {
+            var bp = definition.Blueprint;
+            var parent = definition.Parent ?? definition.isRedirectOf;
+            var parentBp = parent?.Blueprint;
+            return
+                (definition.steamItem is not null && definition.steamItem.id != 0) ||
+                (definition.steamDlc is not null && definition.steamDlc.dlcAppID != 0) ||
+                (bp is not null && bp.NeedsSteamDLC) ||
+                (parentBp is not null && parentBp.NeedsSteamDLC) ||
+                definition.isRedirectOf is not null;
+        }
+
+        public ulong FilterSkinId(PasteData pasteData, ulong skinId)
+        {
+            if (skinId == 0)
+                return skinId;
+
+            return pasteData.SkinsMode switch
+            {
+                SkinsMode.NoSkins => 0,
+                SkinsMode.NoPaidSkins when _paidSkinIds.Contains(skinId) => 0,
+                SkinsMode.AllowSpecifiedOnly when !_config.Paste.SpecifiedSkinIds.Contains(skinId) => 0,
+                SkinsMode.BlockSpecifiedOnly when _config.Paste.SpecifiedSkinIds.Contains(skinId) => 0,
+                _ => skinId
+            };
+        }
+
+        public bool GetItemDefinitionForPrefab(string prefabPath, out ItemDefinition def, bool useRedirect = true)
+        {
+            def = null;
+
+            if (!_prefabToItemDef.TryGetValue(prefabPath, out def))
+                return false;
+
+            if (useRedirect && def?.isRedirectOf != null)
+                def = def.isRedirectOf;
+
+            return def != null;
+        }
+
+        private bool ShouldRedirectForSkinsMode(PasteData pasteData, ItemDefinition itemDef)
+        {
+            var useRedirect = pasteData.SkinsMode == SkinsMode.NoSkins ||
+                              pasteData.SkinsMode == SkinsMode.NoPaidSkins;
+
+            if (pasteData.SkinsMode == SkinsMode.AllowSpecifiedOnly ||
+                pasteData.SkinsMode == SkinsMode.BlockSpecifiedOnly)
+            {
+                bool isInSpecifiedList = _config.Paste.SpecifiedSkinRedirects.Contains(itemDef.shortname);
+
+                if (pasteData.SkinsMode == SkinsMode.AllowSpecifiedOnly && !isInSpecifiedList)
+                    useRedirect = true;
+                else if (pasteData.SkinsMode == SkinsMode.BlockSpecifiedOnly && isInSpecifiedList)
+                    useRedirect = true;
+            }
+
+            return useRedirect;
+        }
         #region API
+
+        private bool IsPasteReady() => _pasteReady;
 
         private object TryCopyFromSteamId(ulong userId, string filename, string[] args, Action callback = null)
         {
@@ -1290,7 +1477,8 @@ namespace Oxide.Plugins
 
         private PasteData Paste(ICollection<Dictionary<string, object>> entities, Dictionary<string, object> protocol,
             bool ownership, Vector3 startPos, IPlayer player, bool stability, float rotationCorrection,
-            float heightAdj, bool auth, Action callback, Action<BaseEntity> callbackSpawned, string filename, bool checkPlaced, bool enableSaving = true)
+            float heightAdj, bool auth, Action callback, Action<BaseEntity> callbackSpawned, string filename,
+            bool checkPlaced, bool enableSaving = true, bool? dlc = null, int? skinsMode = null)
         {
             //Settings
 
@@ -1323,10 +1511,17 @@ namespace Oxide.Plugins
                 Filename = filename,
                 CheckPlaced = checkPlaced,
                 Version = vNumber,
-                EnableSaving = enableSaving
+                EnableSaving = enableSaving,
+                Dlc = dlc ?? _config.Paste.Dlc,
+                SkinsMode = (SkinsMode)(skinsMode.HasValue && IsValidSkinsMode(skinsMode.Value)
+                    ? skinsMode.Value
+                    : _config.Paste.SkinsMode)
             };
 
-            NextTick(() => PasteLoop(pasteData));
+            if (!_pasteReady)
+                _pendingPastes.Add(pasteData);
+            else
+                NextTick(() => PasteLoop(pasteData));
 
             return pasteData;
         }
@@ -1635,13 +1830,41 @@ namespace Oxide.Plugins
         private void PasteEntity(Dictionary<string, object> data, PasteData pasteData, BaseEntity parent = null)
         {
             bool isChild = parent != null;
-            
-            var prefabname = (string)data["prefabname"];
+
+            var prefabname = GetPrefabName((string)data["prefabname"]);
 #if DEBUG
             Puts($"{nameof(PasteLoop)}: Entity {prefabname}");
 #endif
             
-            var skinid = data.ContainsKey("skinid") ? ulong.Parse(data["skinid"].ToString()) : 0;
+            var skinid = data.ContainsKey("skinid")
+                ? FilterSkinId(pasteData, ulong.Parse(data["skinid"].ToString()))
+                : 0;
+
+            if (!pasteData.Dlc || pasteData.SkinsMode != SkinsMode.AllSkins)
+            {
+                string redirectPrefab = null;
+                if (GetItemDefinitionForPrefab(prefabname, out var itemDef, useRedirect: false) &&
+                    itemDef.isRedirectOf != null)
+                    _itemDefToPrefab.TryGetValue(itemDef.isRedirectOf, out redirectPrefab);
+
+                if (!pasteData.Dlc && _dlcPrefabs.Contains(prefabname))
+                {
+                    if (redirectPrefab == null || _dlcPrefabs.Contains(redirectPrefab))
+                        return;
+
+                    prefabname = redirectPrefab;
+                    skinid = 0;
+                }
+                else if (pasteData.SkinsMode != SkinsMode.AllSkins && redirectPrefab != null)
+                {
+                    if (ShouldRedirectForSkinsMode(pasteData, itemDef))
+                    {
+                        prefabname = redirectPrefab;
+                        skinid = 0;
+                    }
+                }
+            }
+
             var pos = isChild ? Vector3.zero : (Vector3)data["position"];
             var rot = isChild ? Quaternion.identity : (Quaternion)data["rotation"];
             var localPos = isChild ? (Vector3)data["position"] : Vector3.zero;
@@ -3043,8 +3266,27 @@ namespace Oxide.Plugins
             {
                 var item = itemDef as Dictionary<string, object>;
                 var itemid = Convert.ToInt32(item["id"]);
+                var itemskin = item.ContainsKey("skinid") ? FilterSkinId(pasteData, ulong.Parse(item["skinid"].ToString())) : 0;
+
+                var def = ItemManager.FindItemDefinition(itemid);
+                if (!pasteData.Dlc && itemid != 0 && _dlcItemIds.Contains(itemid))
+                {
+                    if (def?.isRedirectOf == null || _dlcItemIds.Contains(def.isRedirectOf.itemid))
+                        continue;
+
+                    itemid = def.isRedirectOf.itemid;
+                    itemskin = 0;
+                }
+                else if (pasteData.SkinsMode != SkinsMode.AllSkins && def?.isRedirectOf != null)
+                {
+                    if (ShouldRedirectForSkinsMode(pasteData, def))
+                    {
+                        itemid = def.isRedirectOf.itemid;
+                        itemskin = 0;
+                    }
+                }
+
                 var itemamount = Convert.ToInt32(item["amount"]);
-                var itemskin = item.ContainsKey("skinid") ? ulong.Parse(item["skinid"].ToString()) : 0;
                 var dataInt = item.ContainsKey("dataInt") ? Convert.ToInt32(item["dataInt"]) : 0;
                 var dataFloat = item.TryGetValue("dataFloat", out getObj) ? Convert.ToSingle(getObj) : 0f;
 
@@ -3661,12 +3903,14 @@ namespace Oxide.Plugins
                 return new ValueTuple<object, PasteData>(Lang("FILE_BROKEN", userId), null);
 
             float heightAdj = 0f, blockCollision = 0f;
+            int skinsMode = _config.Paste.SkinsMode;
             bool auth = _config.Paste.Auth,
                 inventories = _config.Paste.Inventories,
                 deployables = _config.Paste.Deployables,
                 vending = _config.Paste.VendingMachines,
                 stability = _config.Paste.Stability,
                 ownership = _config.Paste.EntityOwner,
+                dlc = _config.Paste.Dlc,
                 checkPlaced = true, enableSaving = true;
 
             for (var i = 0;; i += 2)
@@ -3768,6 +4012,18 @@ namespace Oxide.Plugins
 
                         break;
 
+                    case "dlc":
+                        if (!bool.TryParse(args[valueIndex], out dlc))
+                            return new(Lang("SYNTAX_BOOL", userId, param), null);
+
+                        break;
+
+                    case "skins":
+                        if (!Int32.TryParse(args[valueIndex], out skinsMode) || !IsValidSkinsMode(skinsMode))
+                            return new(Lang("SYNTAX_SKINSMODE", userId, param), null);
+
+                        break;
+
                     default:
                         return new ValueTuple<object, PasteData>(Lang("SYNTAX_PASTE_OR_PASTEBACK", userId), null);
                 }
@@ -3775,8 +4031,7 @@ namespace Oxide.Plugins
 
             startPos.y += heightAdj;
 
-            var preloadData = PreLoadData(data["entities"] as List<object>, startPos, rotationCorrection, deployables,
-                inventories, auth, vending);
+            var preloadData = PreLoadData(data["entities"] as List<object>, startPos, rotationCorrection, deployables, inventories, auth, vending);
 
             if (autoHeight)
             {
@@ -3810,7 +4065,8 @@ namespace Oxide.Plugins
                 protocol = data["protocol"] as Dictionary<string, object>;
 
             var pasteData = Paste(preloadData, protocol, ownership, startPos, player, stability, rotationCorrection,
-                autoHeight ? heightAdj : 0, auth, callback, callbackSpawned, filename, checkPlaced, enableSaving);
+                autoHeight ? heightAdj : 0, auth, callback, callbackSpawned, filename, checkPlaced, enableSaving,
+                dlc, skinsMode);
 
             return new ValueTuple<object, PasteData>(true, pasteData);
         }
@@ -4602,11 +4858,13 @@ namespace Oxide.Plugins
                             "en", "Syntax: /pasteback <Target Filename> <options values>\n" +
                                   "height XX - Adjust the height\n" +
                                   "vending - Information and sellings in vending machine\n" +
-                                  "stability <true/false> - Wether or not to disable stability\n" +
-                                  "deployables <true/false> - Wether or not to copy deployables\n" +
-                                  "auth <true/false> - Wether or not to copy lock and cupboard whitelists\n" +
+                                  "stability <true/false> - Whether or not to disable stability\n" +
+                                  "deployables <true/false> - Whether or not to copy deployables\n" +
+                                  "auth <true/false> - Whether or not to copy lock and cupboard whitelists\n" +
                                   "position <x,y,z> - Override position\n" +
-                                  "rotation <X> - Override rotation"
+                                  "rotation <X> - Override rotation\n" +
+                                  "dlc <true/false> - false to exclude DLC items and deployables\n" +
+                                  "skins <0-4> - 0=no skins, 1=all, 2=no paid skins, 3=allow specified only, 4=block specified only"
                         },
                         {
                             "ru", "Синтаксис: /pasteback <Название Объекта> <опция значение>\n" +
@@ -4634,9 +4892,11 @@ namespace Oxide.Plugins
                                   "deployables true/false - false to remove deployables\n" +
                                   "inventories true/false - false to ignore inventories\n" +
                                   "vending - Information and sellings in vending machine\n" +
-                                  "stability <true/false> - Wether or not to disable stability on the building\n" +
+                                  "stability <true/false> - Whether or not to disable stability on the building\n" +
                                   "position <x,y,z> - Override position\n" +
-                                  "rotation <X> - Override rotation"
+                                  "rotation <X> - Override rotation\n" +
+                                  "dlc <true/false> - false to exclude DLC items and deployables\n" +
+                                  "skins <0-4> - 0=no skins, 1=all, 2=no paid skins, 3=allow specified only, 4=block specified only"
                         },
                         {
                             "ru", "Синтаксис: /paste or /pasteback <Название Объекта> <опция значение>\n" +
@@ -4681,8 +4941,8 @@ namespace Oxide.Plugins
                             "en", "Syntax: /copy <Target Filename> <options values>\n" +
                                   "radius XX (default 3) - The radius in which to search for the next object (performs this search from every other object)\n" +
                                   "method proximity/building (default proximity) - Building only copies objects which are part of the building, proximity copies everything (within the radius)\n" +
-                                  "deployables true/false (saves deployables or not) - Wether to save deployables\n" +
-                                  "inventories true/false (saves inventories or not) - Wether to save inventories of found objects with inventories."
+                                  "deployables true/false (saves deployables or not) - Whether to save deployables\n" +
+                                  "inventories true/false (saves inventories or not) - Whether to save inventories of found objects with inventories."
                         },
                         {
                             "ru", "Синтаксис: /copy <Название Объекта> <опция значение>\n" +
@@ -4741,6 +5001,14 @@ namespace Oxide.Plugins
                         { "en", "Couldn't find the player" },
                         { "ru", "Не удалось найти игрока" },
                         { "nl", "Speler niet gevonden." }
+                    }
+                },
+                {
+                    "SYNTAX_SKINSMODE", new Dictionary<string, string>
+                    {
+                        { "en", "Option {0} must be <0-4> 0=no skins, 1=all, 2=no paid skins, 3=allow specified only, 4=block specified only" },
+                        { "ru", "Опция {0} должна быть <0-4> 0=без скинов, 1=все, 2=без платных скинов, 3=только разрешенные, 4=блокировать указанные" },
+                        { "nl", "Optie {0} moet <0-4> zijn 0=geen skins, 1=alle, 2=geen betaalde skins, 3=alleen toegestane, 4=blokkeer opgegeven" }
                     }
                 },
                 {
@@ -4859,6 +5127,8 @@ namespace Oxide.Plugins
             public bool Ownership;
             public bool CheckPlaced = true;
             public bool EnableSaving = true;
+            public bool Dlc = true;
+            public SkinsMode SkinsMode = SkinsMode.AllSkins;
 
             public bool Cancelled = false;
 
