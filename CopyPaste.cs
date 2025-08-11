@@ -1114,7 +1114,7 @@ namespace Oxide.Plugins
                 data.Add("gridSlots", gridSlots);
             }
 
-            var commandBlock = entity as CommandBlock;
+            var commandBlock = entity as global::CommandBlock;
             if (commandBlock != null)
             {
                 data.Add("currentCommand", commandBlock.currentCommand);
@@ -2497,7 +2497,7 @@ namespace Oxide.Plugins
                 }
             }
 
-            var commandBlock = entity as CommandBlock;
+            var commandBlock = entity as global::CommandBlock;
             if (commandBlock != null)
             {
                 object rawValue;
