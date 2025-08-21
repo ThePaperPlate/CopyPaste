@@ -342,7 +342,6 @@ namespace Oxide.Plugins
         {
             if ((Steamworks.SteamInventory.Definitions?.Length ?? 0) == 0)
             {
-                PrintWarning("Pasting not ready: waiting for Steam inventory definitions to be updated.");
                 timer.In(3f, ProcessItemDefinitions);
                 return;
             }
@@ -1519,7 +1518,10 @@ namespace Oxide.Plugins
             };
 
             if (!_pasteReady)
+            {
+                PrintWarning($"Pasting '{filename}' has been queued: waiting for Steam definitions");
                 _pendingPastes.Add(pasteData);
+            }
             else
                 NextTick(() => PasteLoop(pasteData));
 
