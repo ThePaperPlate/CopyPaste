@@ -40,7 +40,7 @@ using System.Diagnostics;
 
 namespace Oxide.Plugins
 {
-    [Info("Copy Paste", "misticos", "4.2.3")]
+    [Info("Copy Paste", "misticos", "4.2.4")]
     [Description("Copy and paste buildings to save them or move them")]
     public class CopyPaste : CovalencePlugin
     {
