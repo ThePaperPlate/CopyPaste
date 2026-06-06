@@ -1279,7 +1279,18 @@ namespace Oxide.Plugins
                         { "currencyAmountPerItem", vendItem.currencyAmountPerItem },
                         { "inStock", vendItem.inStock },
                         { "currencyIsBP", vendItem.currencyIsBP },
-                        { "itemToSellIsBP", vendItem.itemToSellIsBP }
+                        { "itemToSellIsBP", vendItem.itemToSellIsBP },
+                        { "itemCondition", vendItem.itemCondition },
+                        { "itemConditionMax", vendItem.itemConditionMax },
+                        { "instanceData", vendItem.instanceData },
+                        { "attachmentsList", vendItem.attachmentsList },
+                        { "totalAttachmentSlots", vendItem.totalAttachmentSlots },
+                        { "priceMultiplier", vendItem.priceMultiplier },
+                        { "ammoType", vendItem.ammoType },
+                        { "ammoCount", vendItem.ammoCount },
+                        { "receivedQuantityMultiplier", vendItem.receivedQuantityMultiplier },
+                        { "sellSkinId", vendItem.sellSkinId },
+                        { "costSkinId", vendItem.costSkinId }
                     });
                 }
 
@@ -3227,7 +3238,7 @@ namespace Oxide.Plugins
                         currencyId = GetItemId(currencyId);
                     }
 
-                    vendingMachine.sellOrders.sellOrders.Add(new ProtoBuf.VendingMachine.SellOrder
+                    var sellOrder = new ProtoBuf.VendingMachine.SellOrder
                     {
                         ShouldPool = false,
                         itemToSellID = itemToSellId,
@@ -3237,7 +3248,46 @@ namespace Oxide.Plugins
                         inStock = Convert.ToInt32(orderInfo["inStock"]),
                         currencyIsBP = Convert.ToBoolean(orderInfo["currencyIsBP"]),
                         itemToSellIsBP = Convert.ToBoolean(orderInfo["itemToSellIsBP"])
-                    });
+                    };
+
+                    if (orderInfo.TryGetValue("itemCondition", out var itemConditionVal))
+                        sellOrder.itemCondition = Convert.ToSingle(itemConditionVal);
+
+                    if (orderInfo.TryGetValue("itemConditionMax", out var itemConditionMaxVal))
+                        sellOrder.itemConditionMax = Convert.ToSingle(itemConditionMaxVal);
+
+                    if (orderInfo.TryGetValue("instanceData", out var instanceDataVal))
+                        sellOrder.instanceData = Convert.ToInt32(instanceDataVal);
+
+                    if (orderInfo.TryGetValue("totalAttachmentSlots", out var totalAttachmentSlotsVal))
+                        sellOrder.totalAttachmentSlots = Convert.ToInt32(totalAttachmentSlotsVal);
+
+                    if (orderInfo.TryGetValue("priceMultiplier", out var priceMultiplierVal))
+                        sellOrder.priceMultiplier = Convert.ToSingle(priceMultiplierVal);
+
+                    if (orderInfo.TryGetValue("ammoType", out var ammoTypeVal))
+                        sellOrder.ammoType = Convert.ToInt32(ammoTypeVal);
+
+                    if (orderInfo.TryGetValue("ammoCount", out var ammoCountVal))
+                        sellOrder.ammoCount = Convert.ToInt32(ammoCountVal);
+
+                    if (orderInfo.TryGetValue("receivedQuantityMultiplier", out var receivedQuantityMultiplierVal))
+                        sellOrder.receivedQuantityMultiplier = Convert.ToSingle(receivedQuantityMultiplierVal);
+
+                    if (orderInfo.TryGetValue("sellSkinId", out var sellSkinIdVal))
+                        sellOrder.sellSkinId = FilterSkinId(pasteData, Convert.ToUInt64(sellSkinIdVal));
+
+                    if (orderInfo.TryGetValue("costSkinId", out var costSkinIdVal))
+                        sellOrder.costSkinId = FilterSkinId(pasteData, Convert.ToUInt64(costSkinIdVal));
+
+                    if (orderInfo.TryGetValue("attachmentsList", out var attachmentsListVal) && attachmentsListVal is IEnumerable<object> attachmentObjs)
+                    {
+                        sellOrder.attachmentsList = new List<int>();
+                        foreach (var a in attachmentObjs)
+                            sellOrder.attachmentsList.Add(Convert.ToInt32(a));
+                    }
+
+                    vendingMachine.sellOrders.sellOrders.Add(sellOrder);
                 }
 
                 vendingMachine.FullUpdate();
