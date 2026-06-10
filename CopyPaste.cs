@@ -614,8 +614,14 @@ namespace Oxide.Plugins
                 var baseEntity = entities.ElementAt(i);
                 if (baseEntity is IItemContainerEntity)
                 {
-                    RemoveEntity(baseEntity);
                     entities.Remove(baseEntity);
+                    // Don't .Kill() the drone storage as it'll cause Drone.Update_Server() to NRE
+                    if (baseEntity is DroneStorage droneStorage && droneStorage.inventory != null)
+                    {
+                        droneStorage.inventory.Clear();
+                        continue;
+                    }
+                    RemoveEntity(baseEntity);
                 }
             }
 
