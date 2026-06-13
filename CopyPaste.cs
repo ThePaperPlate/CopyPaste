@@ -157,6 +157,13 @@ namespace Oxide.Plugins
             BlockSpecifiedOnly = 4
         }
 
+        public enum PasteErrorMode
+        {
+            Stop = 1,
+            UndoPasted = 2,
+            Continue = 3
+        }
+
         //Config
 
         private ConfigData _config;
@@ -246,6 +253,10 @@ namespace Oxide.Plugins
                 [DefaultValue((int)CopyPaste.SkinsMode.AllSkins)]
                 public int SkinsMode { get; set; } = (int)CopyPaste.SkinsMode.AllSkins;
 
+                [JsonProperty(PropertyName = "When an entity fails to paste: (1=stop, 2=undo pasted, 3=continue)")]
+                [DefaultValue((int)CopyPaste.PasteErrorMode.Stop)]
+                public int PasteErrorMode { get; set; } = (int)CopyPaste.PasteErrorMode.Stop;
+
                 [JsonProperty(PropertyName = "Specified Skins (skin id, like 2601577757, or item shortname for redirected skins, like hazmatsuit.spacesuit)")]
                 public List<object> SpecifiedSkins { get; set; } = new();
 
@@ -272,6 +283,12 @@ namespace Oxide.Plugins
             {
                 PrintWarning("Invalid config value specified for 'Skins', resetting to default of 1 (all skins)");
                 _config.Paste.SkinsMode = (int)SkinsMode.AllSkins;
+            }
+
+            if (!IsValidPasteErrorMode(_config.Paste.PasteErrorMode))
+            {
+                PrintWarning("Invalid config value specified for 'When an entity fails to paste', resetting to default of 1 (stop)");
+                _config.Paste.PasteErrorMode = (int)PasteErrorMode.Stop;
             }
 
             for (var i = 0; i < _config.Paste.SpecifiedSkins.Count; i++)
@@ -303,6 +320,8 @@ namespace Oxide.Plugins
         }
 
         private bool IsValidSkinsMode(int mode) => Enum.IsDefined(typeof(SkinsMode), mode);
+
+        private bool IsValidPasteErrorMode(int mode) => Enum.IsDefined(typeof(PasteErrorMode), mode);
 
         //Hooks
 
@@ -1639,7 +1658,8 @@ namespace Oxide.Plugins
         private PasteData Paste(ICollection<Dictionary<string, object>> entities, Dictionary<string, object> protocol,
             bool ownership, Vector3 startPos, IPlayer player, bool stability, float rotationCorrection,
             float heightAdj, bool auth, Action callback, Action<BaseEntity> callbackSpawned, string filename,
-            bool checkPlaced, bool enableSaving = true, bool? dlc = null, int? skinsMode = null)
+            bool checkPlaced, bool enableSaving = true, bool? dlc = null, int? skinsMode = null,
+            int? pasteErrorMode = null)
         {
             //Settings
 
@@ -1676,7 +1696,10 @@ namespace Oxide.Plugins
                 Dlc = dlc ?? _config.Paste.Dlc,
                 SkinsMode = (SkinsMode)(skinsMode.HasValue && IsValidSkinsMode(skinsMode.Value)
                     ? skinsMode.Value
-                    : _config.Paste.SkinsMode)
+                    : _config.Paste.SkinsMode),
+                PasteErrorMode = (PasteErrorMode)(pasteErrorMode.HasValue && IsValidPasteErrorMode(pasteErrorMode.Value)
+                    ? pasteErrorMode.Value
+                    : _config.Paste.PasteErrorMode)
             };
 
             if (!_pasteReady)
@@ -1707,7 +1730,26 @@ namespace Oxide.Plugins
             {
                 entities.Remove(data);
 
-                PasteEntity(data, pasteData);
+                try
+                {
+                    PasteEntity(data, pasteData);
+                }
+                catch (Exception ex)
+                {
+                    PrintWarning("There was a problem pasting \"{0}\": Failed to paste entity \"{1}\" - {2}",
+                        pasteData.Filename,
+                        (string)data["prefabname"],
+                        ex);
+
+                    pasteData.Player.Reply(Lang("PASTE_FAILED", pasteData.Player.Id, pasteData.Filename));
+
+                    if (pasteData.PasteErrorMode == PasteErrorMode.UndoPasted)
+                        UndoLoop(new HashSet<BaseEntity>(pasteData.PastedEntities), pasteData.Player,
+                            pasteData.PastedEntities.Count);
+
+                    if (pasteData.PasteErrorMode != PasteErrorMode.Continue)
+                        return;
+                }
             }
 
             if (entities.Count > 0)
@@ -5774,6 +5816,14 @@ namespace Oxide.Plugins
                     }
                 },
                 {
+                    "PASTE_FAILED", new Dictionary<string, string>
+                    {
+                        { "en", "There was a problem pasting \"{0}\", see logs for more information" },
+                        { "ru", "Произошла ошибка при вставке \"{0}\", подробности смотрите в журналах" },
+                        { "nl", "Er is een probleem opgetreden bij het plakken van \"{0}\", zie de logs voor meer informatie" }
+                    }
+                },
+                {
                     "SYNTAX_COPY", new Dictionary<string, string>
                     {
                         {
@@ -5971,6 +6021,7 @@ namespace Oxide.Plugins
             public bool EnableSaving = true;
             public bool Dlc = true;
             public SkinsMode SkinsMode = SkinsMode.AllSkins;
+            public PasteErrorMode PasteErrorMode = PasteErrorMode.Stop;
 
             public bool Cancelled = false;
 
