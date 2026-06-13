@@ -2349,9 +2349,9 @@ namespace Oxide.Plugins
                 {
                     var playerBoat = parent as PlayerBoat;
                     bool needsNormalParenting = entity is DroppedItem;
-                    bool playerBotEntity = playerBoat != null && !needsNormalParenting;
+                    bool playerBoatEntity = playerBoat != null && !needsNormalParenting;
 
-                    if (playerBotEntity)
+                    if (playerBoatEntity)
                     {
                         if (!pasteData.playerBoats.ContainsKey(playerBoat))
                             pasteData.playerBoats[playerBoat] = new();
@@ -2386,7 +2386,7 @@ namespace Oxide.Plugins
                     {
                         photo.AddToEasel(parent);
                     }
-                    else if (!playerBotEntity && entity is not (CustomDoorManipulator
+                    else if (!playerBoatEntity && entity is not (CustomDoorManipulator
                         or AutoTurret
                         or GrowableEntity
                         or Signage
