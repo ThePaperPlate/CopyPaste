@@ -595,7 +595,7 @@ namespace Oxide.Plugins
             var io = entity as IOEntity;
             if (io != null)
             {
-                io.ClearConnections();
+                try { io.ClearConnections(); } catch { } // this can throw
             }
 
             var autoTurret = entity as AutoTurret;
@@ -1745,16 +1745,15 @@ namespace Oxide.Plugins
 
                 foreach (var adapter in pasteData.industrialStorageAdaptors)
                 {
-                    if (adapter == null) { continue; }
+                    if (adapter == null || adapter.IsDestroyed) { continue; } // checking both is good too
                     if (!adapter.HasParent())
                     {
-                        List<BaseEntity> ents = Facepunch.Pool.Get<List<BaseEntity>>();
+                        using var ents = Facepunch.Pool.Get<PooledList<BaseEntity>>(); // prevent pool leak on SetParent exception, caused by other plugins
                         Vis.Entities(adapter.transform.position + (adapter.transform.up * -0.2f), 0.01f, ents);
                         if (ents.Count > 0)
                         {
                             adapter.SetParent(ents[0], true, true);
                         }
-                        Facepunch.Pool.FreeUnmanaged(ref ents);
                     }
                     adapter.MarkDirtyForceUpdateOutputs();
                     adapter.SendNetworkUpdateImmediate();
@@ -3357,7 +3356,8 @@ namespace Oxide.Plugins
                     Puts($"{nameof(PasteLoop)}: Convert.ToUInt64 1619");
 #endif
                     var oldId = Convert.ToUInt64(oldIdObject);
-                    pasteData.EntityLookup.Add(oldId, ioData);
+                    if (!pasteData.EntityLookup.ContainsKey(oldId)) // duplicate ID from outdated copy
+                        pasteData.EntityLookup.Add(oldId, ioData);
                 }
             }
             
@@ -4074,8 +4074,10 @@ namespace Oxide.Plugins
             foreach (var itemDef in items)
             {
                 var item = itemDef as Dictionary<string, object>;
-                var itemid = Convert.ToInt32(item["id"]);
-                var itemskin = item.ContainsKey("skinid") ? FilterSkinId(pasteData, ulong.Parse(item["skinid"].ToString())) : 0;
+                var itemid = item.TryGetValue("id", out getObj) ? Convert.ToInt32(getObj) : 0;
+                var itemskin = item.TryGetValue("skinid", out getObj)
+                    ? FilterSkinId(pasteData, Convert.ToUInt64(getObj))
+                    : 0;
 
                 var def = ItemManager.FindItemDefinition(itemid);
                 if (!pasteData.Dlc && itemid != 0 && _dlcItemIds.Contains(itemid))
@@ -4095,8 +4097,8 @@ namespace Oxide.Plugins
                     }
                 }
 
-                var itemamount = Convert.ToInt32(item["amount"]);
-                var dataInt = item.ContainsKey("dataInt") ? Convert.ToInt32(item["dataInt"]) : 0;
+                var itemamount = item.TryGetValue("amount", out getObj) ? Convert.ToInt32(getObj) : 0;
+                var dataInt = item.TryGetValue("dataInt", out getObj) ? Convert.ToInt32(getObj) : 0;
                 var dataFloat = item.TryGetValue("dataFloat", out getObj) ? Convert.ToSingle(getObj) : 0f;
 
                 if (itemid == 0 || itemamount == 0)
@@ -4217,7 +4219,7 @@ namespace Oxide.Plugins
                     {
                         // Needs to be processed after all of the children are spawned
                         var oldId = Convert.ToUInt64(item["subEntity"]);
-                        if (oldId != 0)
+                        if (oldId != 0 && !pasteData.ItemsWithSubEntity.ContainsKey(oldId))
                             pasteData.ItemsWithSubEntity.Add(oldId, i);
                     }
 
